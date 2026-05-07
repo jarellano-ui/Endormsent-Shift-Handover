@@ -4,11 +4,18 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import cookieParser from "cookie-parser";
+import { createClient } from "@supabase/supabase-js";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const APP_URL = process.env.APP_URL || "http://localhost:3000";
+const SUPABASE_URL = process.env.SUPABASE_URL || "";
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 async function startServer() {
   const app = express();
@@ -17,44 +24,48 @@ async function startServer() {
   app.use(express.json());
   app.use(cookieParser());
 
-  const DB_DIR = path.join(__dirname, "data");
-  const DB_FILE = path.join(DB_DIR, "db.json");
-
-  // Ensure DB exists
-  if (!fs.existsSync(DB_DIR)) {
-    fs.mkdirSync(DB_DIR);
-  }
-  if (!fs.existsSync(DB_FILE)) {
-    fs.writeFileSync(DB_FILE, JSON.stringify({ 
-      handovers: [], 
-      tasks: [],
-      notifications: [],
-      feedback: [],
-      users: [
-        {
-          id: "admin-1",
-          name: "John Errol Arellano",
-          email: "john.arellano@helloconnect.org",
-          role: "ADMIN",
-          position: "IT Administrator",
-          password: "password123" // Simple password for now
+  // Migration logic: If db.json exists, try to push data to Supabase if it's empty
+  const migrateLocalData = async () => {
+    const DB_FILE = path.join(__dirname, "data", "db.json");
+    if (fs.existsSync(DB_FILE)) {
+      try {
+        console.log("Found local db.json. Checking if Supabase migration is needed...");
+        const db = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
+        
+        // Check if users table is empty
+        const { count, error } = await supabase.from('users').select('*', { count: 'exact', head: true });
+        
+        if (error) {
+          console.error("Migration check failed:", error.message);
+          console.log("TIP: This usually means you haven't run the SQL setup in the Supabase SQL Editor yet.");
+        } else if (count && count > 0) {
+          console.log("Supabase already has users. Skipping migration to prevent overwriting existing data.");
+        } else {
+          console.log("Supabase is empty. Migrating local data...");
+          
+          if (db.users?.length) await supabase.from('users').insert(db.users);
+          if (db.tasks?.length) await supabase.from('tasks').insert(db.tasks);
+          if (db.handovers?.length) await supabase.from('handovers').insert(db.handovers);
+          if (db.notifications?.length) await supabase.from('notifications').insert(db.notifications);
+          if (db.feedback?.length) await supabase.from('feedback').insert(db.feedback);
+          
+          console.log("Migration complete!");
         }
-      ]
-    }));
+      } catch (err) {
+        console.error("Migration failed:", err);
+      }
+    }
+  };
+
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    await migrateLocalData();
+  } else {
+    console.warn("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing. Database operations will fail.");
   }
 
   const generateId = () => {
     return Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
   };
-
-  const getDB = () => {
-    const db = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
-    if (!db.users) db.users = [];
-    if (!db.notifications) db.notifications = [];
-    if (!db.feedback) db.feedback = [];
-    return db;
-  };
-  const saveDB = (db: any) => fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 
   // API Routes
   app.get("/api/auth/me", (req, res) => {
@@ -79,12 +90,17 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  app.post("/api/auth/login", (req, res) => {
+  app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
-    const db = getDB();
-    const user = db.users.find((u: any) => u.email === email && u.password === password);
+    
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .eq('password', password)
+      .single();
 
-    if (!user) {
+    if (error || !user) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
@@ -106,58 +122,50 @@ async function startServer() {
     res.json(sessionUser);
   });
 
-  app.get("/api/users", (req, res) => {
-    const db = getDB();
-    // Return users without passwords for listing, but admin might need to see them for editing
-    // Actually, never send passwords back. Just send a flag if they have one or allow setting a new one.
-    res.json(db.users.map(({ password, ...u }: any) => u));
+  app.get("/api/users", async (req, res) => {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, name, email, role, position, createdAt');
+      
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
   });
 
-  app.put("/api/users/:id", (req, res) => {
+  app.put("/api/users/:id", async (req, res) => {
     const session = req.cookies.user_session;
     if (!session) return res.status(401).json({ error: "Unauthorized" });
     
     const sessionData = JSON.parse(session);
-    const db = getDB();
     const targetId = req.params.id;
     
-    // Check if requester is admin or the user themselves
     if (sessionData.role !== 'ADMIN' && sessionData.id !== targetId) {
       return res.status(403).json({ error: "Forbidden" });
     }
 
-    const userIndex = db.users.findIndex((u: any) => u.id === targetId);
-    if (userIndex === -1) return res.status(404).json({ error: "User not found" });
-
     const { name, email, position, password, role } = req.body;
-    
-    const existingUser = db.users[userIndex];
-    
-    // Only admins can change roles
-    const updatedRole = sessionData.role === 'ADMIN' ? (role ?? existingUser.role) : existingUser.role;
+    const updates: any = {};
+    if (name) updates.name = name;
+    if (email) updates.email = email;
+    if (position) updates.position = position;
+    if (password) updates.password = password;
+    if (sessionData.role === 'ADMIN' && role) updates.role = role;
 
-    db.users[userIndex] = {
-      ...existingUser,
-      name: name ?? existingUser.name,
-      email: email ?? existingUser.email,
-      position: position ?? existingUser.position,
-      role: updatedRole,
-    };
+    const { data, error } = await supabase
+      .from('users')
+      .update(updates)
+      .eq('id', targetId)
+      .select()
+      .single();
 
-    if (password) {
-      db.users[userIndex].password = password;
-    }
+    if (error) return res.status(500).json({ error: error.message });
 
-    saveDB(db);
-
-    // If updating self, update session cookie
     if (sessionData.id === targetId) {
       const updatedSession = { 
         ...sessionData, 
-        name: db.users[userIndex].name, 
-        email: db.users[userIndex].email, 
-        position: db.users[userIndex].position,
-        role: db.users[userIndex].role
+        name: data.name, 
+        email: data.email, 
+        position: data.position,
+        role: data.role
       };
       res.cookie("user_session", JSON.stringify(updatedSession), {
         httpOnly: true,
@@ -168,62 +176,70 @@ async function startServer() {
       return res.json(updatedSession);
     }
 
-    const { password: _, ...safeUser } = db.users[userIndex];
+    const { password: _, ...safeUser } = data;
     res.json(safeUser);
   });
 
-  app.post("/api/users", (req, res) => {
-    const db = getDB();
+  app.post("/api/users", async (req, res) => {
     const newUser = {
       id: generateId(),
       ...req.body
     };
     
-    // Check for duplicate emails or IDs
-    if (db.users.some((u: any) => u.email === newUser.email)) {
-      return res.status(400).json({ error: "User with this email already exists" });
+    const { data, error } = await supabase
+      .from('users')
+      .insert([newUser])
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === '23505') return res.status(400).json({ error: "User with this email already exists" });
+      return res.status(500).json({ error: error.message });
     }
 
-    db.users.push(newUser);
-    saveDB(db);
-    const { password, ...safeUser } = newUser;
+    const { password, ...safeUser } = data;
     res.json(safeUser);
   });
 
-  app.delete("/api/users/:id", (req, res) => {
+  app.delete("/api/users/:id", async (req, res) => {
     const session = req.cookies.user_session;
     if (!session) return res.status(401).json({ error: "Unauthorized" });
     const sessionData = JSON.parse(session);
     
-    // Only admins can delete users
     if (sessionData.role !== 'ADMIN') {
       return res.status(403).json({ error: "Forbidden" });
     }
 
-    const { id } = req.params;
-    const db = getDB();
-    const initialCount = db.users.length;
-    db.users = db.users.filter((u: any) => String(u.id) !== String(id));
+    const { error } = await supabase
+      .from('users')
+      .delete()
+      .eq('id', req.params.id);
     
-    if (db.users.length === initialCount) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    saveDB(db);
+    if (error) return res.status(500).json({ error: error.message });
     res.json({ status: "ok" });
   });
-  app.get("/api/handovers", (req, res) => {
-    const db = getDB();
-    res.json(db.handovers || []);
+
+  app.get("/api/handovers", async (req, res) => {
+    const { data, error } = await supabase
+      .from('handovers')
+      .select('*')
+      .order('timestamp', { ascending: false });
+      
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
   });
 
-  app.post("/api/handovers", (req, res) => {
-    const db = getDB();
+  app.post("/api/handovers", async (req, res) => {
     const newHandover = {
       ...req.body,
-      id: generateId() // Ensure server-side ID for uniqueness
+      id: generateId()
     };
-    db.handovers.push(newHandover);
+    
+    const { error } = await supabase
+      .from('handovers')
+      .insert([newHandover]);
+
+    if (error) return res.status(500).json({ error: error.message });
 
     // Create notification
     const notification = {
@@ -236,111 +252,138 @@ async function startServer() {
       assignedToUserIds: Array.isArray(newHandover.endorsedTo) ? newHandover.endorsedTo : (newHandover.endorsedTo ? [newHandover.endorsedTo] : []),
       linkView: 'handover'
     };
-    db.notifications.push(notification);
+    
+    await supabase.from('notifications').insert([notification]);
 
-    saveDB(db);
     res.json(newHandover);
   });
 
-  app.put("/api/handovers", (req, res) => {
-    const db = getDB();
-    db.handovers = req.body;
-    saveDB(db);
+  app.put("/api/handovers", async (req, res) => {
+    // This endpoint seems to replace all handovers, which is unusual for a DB.
+    // Usually we update a specific one. But let's keep the logic or adapt it.
+    // Frontend seems to send the full list.
+    const handovers = req.body;
+    if (Array.isArray(handovers)) {
+      for (const h of handovers) {
+        await supabase.from('handovers').upsert(h);
+      }
+    }
     res.json({ status: "ok" });
   });
 
-  app.get("/api/tasks", (req, res) => {
-    const db = getDB();
-    res.json(db.tasks || []);
+  app.get("/api/tasks", async (req, res) => {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('*')
+      .order('createdAt', { ascending: false });
+      
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
   });
 
-  app.post("/api/tasks", (req, res) => {
-    const db = getDB();
+  app.post("/api/tasks", async (req, res) => {
     const newTasks = req.body;
-    const oldTasksCount = (db.tasks || []).length;
     
-    // Identify new tasks for notifications
-    if (Array.isArray(newTasks) && newTasks.length > oldTasksCount) {
-      const addedTasks = newTasks.filter(t => !db.tasks.find((ot: any) => ot.id === t.id));
-      addedTasks.forEach(t => {
-        db.notifications.push({
-          id: generateId(),
-          type: 'task',
-          title: 'New Task Assigned',
-          message: `${t.title}`,
-          timestamp: Date.now(),
-          readBy: [],
-          assignedToUserIds: Array.isArray(t.assignedTo) ? t.assignedTo : (t.assignedTo ? [t.assignedTo] : []),
-          linkView: 'tasks'
-        });
-      });
+    if (Array.isArray(newTasks)) {
+      // Get existing tasks to identify new ones for notifications
+      const { data: existingTasks } = await supabase.from('tasks').select('id');
+      const existingIds = new Set((existingTasks || []).map(t => t.id));
+
+      for (const t of newTasks) {
+        const { error } = await supabase.from('tasks').upsert(t);
+        
+        if (!error && !existingIds.has(t.id)) {
+          // New task notification
+          await supabase.from('notifications').insert([{
+            id: generateId(),
+            type: 'task',
+            title: 'New Task Assigned',
+            message: `${t.title}`,
+            timestamp: Date.now(),
+            readBy: [],
+            assignedToUserIds: Array.isArray(t.assignedTo) ? t.assignedTo : (t.assignedTo ? [t.assignedTo] : []),
+            linkView: 'tasks'
+          }]);
+        }
+      }
     }
 
-    db.tasks = newTasks; 
-    saveDB(db);
     res.json({ status: "ok" });
   });
 
-  app.get("/api/notifications", (req, res) => {
-    const db = getDB();
-    // Sort by newest first
-    const sorted = [...(db.notifications || [])].sort((a, b) => b.timestamp - a.timestamp);
-    res.json(sorted.slice(0, 50)); // Return last 50
+  app.get("/api/notifications", async (req, res) => {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .order('timestamp', { ascending: false })
+      .limit(50);
+      
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
   });
 
-  app.post("/api/notifications/read", (req, res) => {
+  app.post("/api/notifications/read", async (req, res) => {
     const session = req.cookies.user_session;
     if (!session) return res.status(401).json({ error: "Unauthorized" });
     const sessionData = JSON.parse(session);
     
-    const db = getDB();
     const { notificationId } = req.body;
     
     if (notificationId === 'all') {
-      db.notifications.forEach((n: any) => {
-        if (!n.readBy.includes(sessionData.id)) {
-          n.readBy.push(sessionData.id);
+      const { data: notifications } = await supabase.from('notifications').select('*');
+      if (notifications) {
+        for (const n of notifications) {
+          if (!n.readBy.includes(sessionData.id)) {
+            const updatedReadBy = [...n.readBy, sessionData.id];
+            await supabase.from('notifications').update({ readBy: updatedReadBy }).eq('id', n.id);
+          }
         }
-      });
+      }
     } else {
-      const notification = db.notifications.find((n: any) => n.id === notificationId);
-      if (notification && !notification.readBy.includes(sessionData.id)) {
-        notification.readBy.push(sessionData.id);
+      const { data: n } = await supabase.from('notifications').select('*').eq('id', notificationId).single();
+      if (n && !n.readBy.includes(sessionData.id)) {
+        const updatedReadBy = [...n.readBy, sessionData.id];
+        await supabase.from('notifications').update({ readBy: updatedReadBy }).eq('id', n.id);
       }
     }
     
-    saveDB(db);
     res.json({ status: "ok" });
   });
 
-  app.get("/api/feedback", (req, res) => {
-    const db = getDB();
-    res.json(db.feedback || []);
+  app.get("/api/feedback", async (req, res) => {
+    const { data, error } = await supabase
+      .from('feedback')
+      .select('*')
+      .order('timestamp', { ascending: false });
+      
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
   });
 
-  app.post("/api/feedback", (req, res) => {
-    const db = getDB();
+  app.post("/api/feedback", async (req, res) => {
     const newFeedback = {
       ...req.body,
       id: generateId(),
       timestamp: Date.now(),
       status: 'new'
     };
-    if (!db.feedback) db.feedback = [];
-    db.feedback.push(newFeedback);
-    saveDB(db);
+    
+    const { error } = await supabase.from('feedback').insert([newFeedback]);
+    if (error) return res.status(500).json({ error: error.message });
     res.json(newFeedback);
   });
 
-  app.put("/api/feedback/:id", (req, res) => {
-    const db = getDB();
+  app.put("/api/feedback/:id", async (req, res) => {
     const { id } = req.params;
-    const index = db.feedback.findIndex((f: any) => f.id === id);
-    if (index === -1) return res.status(404).json({ error: "Feedback not found" });
-    
-    db.feedback[index] = { ...db.feedback[index], ...req.body };
-    saveDB(db);
-    res.json(db.feedback[index]);
+    const { data, error } = await supabase
+      .from('feedback')
+      .update(req.body)
+      .eq('id', id)
+      .select()
+      .single();
+      
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
   });
 
   app.get("/api/proxy-sheet", async (req, res) => {
@@ -350,32 +393,26 @@ async function startServer() {
     }
 
     const sheetId = '11KIs2UlpayQn6ugWVtJETxE8ZjEH00uqgHBkgNFnQ9o';
-    // Using gviz/tq endpoint to target specific sheet names
     const baseUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq`;
     const url = `${baseUrl}?tqx=out:csv&sheet=${encodeURIComponent(month.toUpperCase())}`;
 
     try {
-      console.log(`Proxying request for spreadsheet month: ${month}`);
       const response = await fetch(url);
       
       if (response.status === 401 || response.status === 403) {
-        console.error(`Spreadsheet Access Denied: 401/403 for month ${month}. The sheet is likely private.`);
         return res.status(401).json({ 
           error: "Access Denied (401). Please ensure your Spreadsheet is shared as 'Anyone with the link can view' AND 'Published to web' as a CSV.",
-          details: "Google returned a login prompt instead of data."
         });
       }
 
       if (!response.ok) {
         const text = await response.text();
-        console.error(`Spreadsheet response not OK: ${response.status}`, text.substring(0, 200));
         return res.status(response.status).json({ error: `Google Sheets error: ${response.status}`, details: text.substring(0, 100) });
       }
       const data = await response.text();
       res.header("Content-Type", "text/csv");
       res.send(data);
     } catch (error) {
-      console.error('Proxy Fetch Error:', error);
       res.status(500).json({ error: "Failed to fetch spreadsheet data from Google" });
     }
   });
