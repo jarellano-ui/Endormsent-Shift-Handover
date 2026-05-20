@@ -31,10 +31,10 @@ jobs:
 
           # Ensure Git identity is pre-configured
           git config --global user.email "john.arellano@helloconnect.org"
-          git config --global user.name "jarellano-ui"
+          git config --global user.name "jarellano13"
 
           # Clean parameters
-          HF_USERNAME="jarellano-ui"
+          HF_USERNAME="jarellano13"
           SPACE_NAME="Endorsement-Shift-Handover"
           
           echo "Syncing repository to Hugging Face Space: $HF_USERNAME/$SPACE_NAME..."
