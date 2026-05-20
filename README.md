@@ -1,20 +1,36 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+---
+title: Endorsement Shift Handover
+emoji: 🤝
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 3000
+pinned: false
+---
 
-# Run and deploy your AI Studio app
+# IT Endorsement & Handover Protocol
 
-This contains everything you need to run your app locally.
+This is the official IT Endorsement Task and Monitoring Protocol for **Hello Connect**.
 
-View your app in AI Studio: https://ai.studio/apps/0c0b413a-908c-4177-bbef-5a04a20026f1
+## Local Development
 
-## Run Locally
+To run this application locally:
 
-**Prerequisites:**  Node.js
+```bash
+# Install dependencies
+npm install
 
+# Run the development server
+npm run dev
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+The server runs on http://localhost:3000
+
+## Deploying to Hugging Face Spaces (Docker SDK)
+
+This Space is configured to deploy automatically from GitHub using **GitHub Actions**.
+
+### Required Environment Variables / Secrets (under Space Settings):
+- `SUPABASE_URL`: Your Supabase database endpoint.
+- `SUPABASE_SERVICE_ROLE_KEY`: Your Supabase security key.
+- `SESSION_SECRET`: A secure random password string used to sign cookies.
