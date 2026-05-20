@@ -1,0 +1,37 @@
+name: Sync to Hugging Face Spaces
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          # The HF_TOKEN secret should be added in your GitHub Repository Settings -> Secrets and Variables -> Actions
+          if [ -z "$HF_TOKEN" ]; then
+            echo "ERROR: HF_TOKEN is not configured in your GitHub secrets. Skipping sync."
+            exit 1
+          fi
+          
+          # Replace 'YOUR_HF_USERNAME' and 'YOUR_SPACE_NAME' in your GitHub Secrets or hardcode them if you prefer.
+          # For example, git push --force https://jarellano-ui:$HF_TOKEN@huggingface.co/spaces/jarellano-ui/Endormsent-Shift-Handover main
+          # We use a force push to ensure the Space exact-matches your GitHub codebase.
+          
+          # We automatically fetch your Hugging Face username and Space name from the secrets, or you can edit these below.
+          HF_USERNAME="jarellano-ui"
+          SPACE_NAME="Endormsent-Shift-Handover"
+          
+          echo "Syncing repository to Hugging Face Space: $HF_USERNAME/$SPACE_NAME..."
+          git push --force "https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME" HEAD:refs/heads/main
