@@ -2,5 +2,7 @@
   "name": "HCIT Endorsement Handover",
   "description": "Official IT Endorsement Task and Monitoring Protocol for Hello Connect.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
