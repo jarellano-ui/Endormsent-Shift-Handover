@@ -19,19 +19,49 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # The HF_TOKEN secret should be added in your GitHub Repository Settings -> Secrets and Variables -> Actions
+          # Safe masked check
           if [ -z "$HF_TOKEN" ]; then
-            echo "ERROR: HF_TOKEN is not configured in your GitHub secrets. Skipping sync."
+            echo "=================================================================="
+            echo "❌ ERROR: HF_TOKEN is not configured in your GitHub Secrets!"
+            echo "Please go to your GitHub repository -> Settings -> Secrets and variables -> Actions"
+            echo "Create a new repository secret called 'HF_TOKEN' containing your Hugging Face write token."
+            echo "=================================================================="
             exit 1
           fi
-          
-          # Replace 'YOUR_HF_USERNAME' and 'YOUR_SPACE_NAME' in your GitHub Secrets or hardcode them if you prefer.
-          # For example, git push --force https://jarellano-ui:$HF_TOKEN@huggingface.co/spaces/jarellano-ui/Endormsent-Shift-Handover main
-          # We use a force push to ensure the Space exact-matches your GitHub codebase.
-          
-          # We automatically fetch your Hugging Face username and Space name from the secrets, or you can edit these below.
+
+          # Ensure Git identity is pre-configured
+          git config --global user.email "john.arellano@helloconnect.org"
+          git config --global user.name "jarellano-ui"
+
+          # Clean parameters
           HF_USERNAME="jarellano-ui"
           SPACE_NAME="Endormsent-Shift-Handover"
           
           echo "Syncing repository to Hugging Face Space: $HF_USERNAME/$SPACE_NAME..."
-          git push --force "https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME" HEAD:refs/heads/main
+          
+          # Perform the git push using standard URL formatting. Ensure errors are reported clearly.
+          if ! git push --force "https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME" HEAD:main 2>git_error.log; then
+            echo "=================================================================="
+            echo "❌ GIT PUSH FAILED WITH EXIT CODE 128 (AUTHENTICATION OR SPACE NOT FOUND)"
+            echo "Please verify the following 3 requirements:"
+            echo ""
+            echo "1. HF_TOKEN value must be an Access Token with 'Write' permissions:"
+            echo "   - Log in to https://huggingface.co/settings/tokens"
+            echo "   - If your token has 'Read' or 'Fine-grained' permissions without active Write access, create a new one as TYPE: 'Write'."
+            echo "   - Ensure it is exactly pasted inside your GitHub Repo Secrets (under Settings > Secrets and variables > Actions > Secrets -> HF_TOKEN)."
+            echo ""
+            echo "2. Check your Space name spelling on Hugging Face:"
+            echo "   - Your current Space name is configured as: '$SPACE_NAME'"
+            echo "   - Is it spelled exactly '$SPACE_NAME' on Hugging Face (including the exact letters and hyphens)?"
+            echo "   - If your Space on HF is named differently (e.g. 'Endorsement-Shift-Handover' without the typo), please rename it on Hugging Face or edit this deploy.yml workflow."
+            echo ""
+            echo "3. Confirm your Hugging Face space SDK is set to 'Docker':"
+            echo "   - Go to your Space settings on Hugging Face and confirm the repository is configured to compile from a Dockerfile."
+            echo "=================================================================="
+            echo ""
+            echo "Detailed Git error output below:"
+            cat git_error.log | sed 's/'"$HF_TOKEN"'/******\/g'  # Mask actual token in outputs if print
+            exit 1
+          else
+            echo "🚀 Successfully synced repository to Hugging Face Space!"
+          fi
