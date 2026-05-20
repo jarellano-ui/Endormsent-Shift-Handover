@@ -10,7 +10,12 @@ import {
   ChevronDown,
   ArrowRightLeft,
   Clock,
-  ChevronUp
+  Pause,
+  Play,
+  XCircle,
+  ChevronUp,
+  Trash2,
+  MessageSquare
 } from 'lucide-react';
 import { Handover, Task, Comment } from '../types';
 import { storage } from '../services/storage';
@@ -28,7 +33,7 @@ interface EndorsementBoardProps {
 
 export default function EndorsementBoard({ handovers, tasks, onUpdate }: EndorsementBoardProps) {
   const [isAdding, setIsAdding] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'pending' | 'on-going' | 'completed'>('all');
+  const [filter, setFilter] = useState<'all' | 'pending' | 'completed' | 'cancelled'>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const { user: sessionUser } = useAuth();
   const localUser = authService.getUser();
@@ -71,19 +76,20 @@ export default function EndorsementBoard({ handovers, tasks, onUpdate }: Endorse
   const toggleHandoverStatus = async (id: string, targetStatus?: Handover['status']) => {
     const updated = handovers.map(h => {
       if (h.id === id) {
-        if (h.status === 'completed') return h; // Locked
+        if (h.status === 'completed' && !targetStatus) return h; 
 
-        let nextStatus: Handover['status'] = h.status === 'pending' ? 'on-going' : 'completed';
+        // Check ownership for cancellation
+        if (targetStatus === 'cancelled' && !h.endorsedBy.includes(currentUserName)) {
+          return h;
+        }
+
+        let nextStatus: Handover['status'] = 'completed';
         if (targetStatus) nextStatus = targetStatus;
 
         const now = Date.now();
         const updates: Partial<Handover> = { 
           status: nextStatus
         };
-
-        if (nextStatus === 'on-going' && !h.startedAt) {
-          updates.startedAt = now;
-        }
 
         if (nextStatus === 'completed' && !h.completedAt) {
           updates.completedAt = now;
@@ -109,9 +115,16 @@ export default function EndorsementBoard({ handovers, tasks, onUpdate }: Endorse
   };
 
   const sortedHandovers = [...handovers].sort((a, b) => b.timestamp - a.timestamp);
+  
+  const deleteHandover = async (id: string) => {
+    const filtered = handovers.filter(h => h.id !== id);
+    await storage.updateHandovers(filtered);
+    onUpdate();
+  };
 
   const filteredHandovers = sortedHandovers.filter(h => {
-    if (filter === 'all') return h.status !== 'completed';
+    if (filter === 'all') return h.status !== 'completed' && h.status !== 'cancelled';
+    if (filter === 'pending') return h.status === 'pending' || h.status === 'on-going';
     return h.status === filter;
   });
 
@@ -138,26 +151,26 @@ export default function EndorsementBoard({ handovers, tasks, onUpdate }: Endorse
   return (
     <div className="space-y-6 pb-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-2 bg-gray-100 p-1.5 rounded-2xl self-start">
-          {(['all', 'pending', 'on-going', 'completed'] as const).map((f) => (
+        <div className="flex items-center gap-2 bg-gray-100 p-1.5 rounded-2xl self-start overflow-x-auto">
+          {(['all', 'pending', 'completed', 'cancelled'] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+              className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
                 filter === f ? 'bg-white text-[#4A773C] shadow-sm' : 'hover:bg-gray-200 text-gray-500'
               }`}
             >
-              {f === 'on-going' ? 'Ongoing' : f}
+              {f}
             </button>
           ))}
         </div>
 
         <button 
           onClick={() => setIsAdding(true)}
-          className="flex items-center gap-3 bg-[#4A773C] text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-[#88C13E] transition-all shadow-xl shadow-[#4A773C]/20"
+          className="bg-[#4A773C] text-white p-4 rounded-xl hover:bg-[#88C13E] transition-all shadow-lg shadow-[#4A773C]/20 flex items-center justify-center shrink-0"
+          title="Add Endorsement"
         >
-          <Plus size={20} />
-          Add Endorsement
+          <Plus size={24} strokeWidth={3} />
         </button>
       </div>
 
@@ -191,16 +204,18 @@ export default function EndorsementBoard({ handovers, tasks, onUpdate }: Endorse
                         <span className={`px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest border shadow-sm ${
                           log.urgency === 'high' ? 'bg-rose-50 text-rose-500 border-rose-100' :
                           log.urgency === 'medium' ? 'bg-amber-50 text-amber-500 border-amber-100' :
-                          'bg-emerald-50 text-emerald-500 border-emerald-100'
+                          'bg-[#D1FAE5] text-[#065F46] border-[#A7F3D0]'
                         }`}>
                           {log.urgency}
                         </span>
                         <span className={`px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest border shadow-sm ${
                           log.status === 'completed' 
-                            ? 'bg-emerald-50 text-emerald-600 border-emerald-100' 
+                            ? 'bg-[#D1FAE5] text-[#065F46] border-[#A7F3D0]' 
                             : log.status === 'on-going'
-                            ? 'bg-blue-50 text-blue-600 border-blue-100'
-                            : 'bg-orange-50 text-orange-600 border-orange-100'
+                            ? 'bg-[#F2F7FF] text-blue-600 border-[#DCE8F9]'
+                            : log.status === 'cancelled'
+                            ? 'bg-rose-50 text-rose-600 border-rose-100'
+                            : 'bg-amber-50 text-amber-600 border-amber-100'
                         }`}>
                           {log.status === 'on-going' ? 'Ongoing' : log.status}
                         </span>
@@ -223,7 +238,7 @@ export default function EndorsementBoard({ handovers, tasks, onUpdate }: Endorse
                             )}
                             {log.completedAt && (
                               <span className="text-[9px] font-black uppercase text-emerald-600 tracking-widest bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
-                                Done: {formatTime(log.completedAt)}
+                                Resolution Time: {new Date(log.completedAt).toLocaleDateString()} {formatTime(log.completedAt)}
                               </span>
                             )}
                           </div>
@@ -232,56 +247,75 @@ export default function EndorsementBoard({ handovers, tasks, onUpdate }: Endorse
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      <div className="flex flex-col items-center gap-1">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleHandoverStatus(log.id);
-                        }}
-                        disabled={log.status === 'completed'}
-                        className={`p-2.5 rounded-xl transition-all ${
-                          log.status === 'completed' 
-                            ? 'bg-emerald-50 text-emerald-600 shadow-sm border border-emerald-100 cursor-not-allowed' 
-                            : log.status === 'on-going'
-                            ? 'bg-blue-50 text-blue-600 border border-blue-100 hover:bg-blue-100'
-                            : 'bg-orange-50 text-orange-600 border border-orange-100 hover:bg-orange-100'
-                        }`}
-                        title={log.status === 'completed' ? 'Endorsement Completed' : log.status === 'on-going' ? 'Mark as Completed' : 'Start Process'}
-                      >
-                        {log.status === 'on-going' ? (
-                          <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 4, ease: "linear" }}>
-                            <Clock size={18} />
-                          </motion.div>
-                        ) : (
-                          <CheckCircle2 size={18} />
-                        )}
-                      </button>
-                      
-                      {log.status === 'on-going' && (
-                        <button
+                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3">
+                      {log.status !== 'completed' && (
+                        <button 
                           onClick={(e) => {
                             e.stopPropagation();
-                            toggleHandoverStatus(log.id, 'pending');
+                            if ((log.endorsedBy || []).includes(currentUserName)) {
+                              toggleHandoverStatus(log.id, log.status === 'cancelled' ? 'pending' : 'cancelled');
+                            }
                           }}
-                          className="text-[8px] font-black uppercase text-gray-400 hover:text-rose-500 transition-colors"
+                          disabled={!(log.endorsedBy || []).includes(currentUserName)}
+                          className={`w-11 h-11 flex items-center justify-center rounded-xl transition-all border ${
+                            log.status === 'cancelled'
+                              ? 'bg-rose-600 text-white border-rose-700 shadow-md shadow-rose-500/30' 
+                              : (log.endorsedBy || []).includes(currentUserName)
+                              ? 'text-gray-300 hover:text-rose-500 border-gray-100 hover:bg-rose-50'
+                              : 'text-gray-200 border-gray-50 cursor-not-allowed opacity-50'
+                          }`}
+                          title={
+                            !(log.endorsedBy || []).includes(currentUserName)
+                              ? "Only the endorsement owners can cancel this"
+                              : log.status === 'cancelled' ? "Revert Cancellation" : "Cancel Endorsement"
+                          }
                         >
-                          Pause
+                          <XCircle size={20} strokeWidth={3} />
                         </button>
                       )}
-                    </div>
+
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleHandoverStatus(log.id, 'completed');
+                        }}
+                        className={`w-11 h-11 flex items-center justify-center rounded-2xl transition-all border ${
+                          log.status === 'completed' 
+                            ? 'bg-emerald-600 text-white border-emerald-700 shadow-md shadow-emerald-500/30' 
+                            : 'text-gray-300 hover:text-emerald-500 border-gray-100 hover:bg-emerald-50'
+                        }`}
+                        title="Set as Complete"
+                      >
+                        <CheckCircle2 size={20} strokeWidth={3} />
+                      </button>
                     </div>
 
-                    <div className="hidden md:flex flex-col items-end min-w-[100px] cursor-pointer" onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}>
-                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Context</p>
-                      <p className="font-black text-gray-600">{log.taskIds?.length || 0} Items</p>
+                    {sessionUser?.role === 'ADMIN' && (
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteHandover(log.id);
+                        }}
+                        className="p-2 text-gray-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                        title="Delete Endorsement"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    )}
+
+                    <div className="w-px h-8 bg-gray-100" />
+
+                    <div className="flex items-center gap-1.5 text-gray-400 px-1">
+                      <MessageSquare size={12} />
+                      <span className="text-[10px] font-bold">{log.comments?.length || 0}</span>
                     </div>
+
                     <button 
                       onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}
-                      className={`p-2 rounded-full transition-all ${expandedId === log.id ? 'bg-[#4A773C] text-white shadow-lg shadow-[#4A773C]/20' : 'text-gray-300'}`}
+                      className={`p-2 rounded-full transition-all ${expandedId === log.id ? 'bg-[#4A773C] text-white shadow-lg shadow-[#4A773C]/20' : 'text-gray-300 hover:bg-gray-50'}`}
                     >
-                      {expandedId === log.id ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                      <ChevronDown size={20} className={`transform transition-transform ${expandedId === log.id ? 'rotate-180' : ''}`} />
                     </button>
                   </div>
                 </div>

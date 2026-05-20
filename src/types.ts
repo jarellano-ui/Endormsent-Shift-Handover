@@ -15,7 +15,7 @@ export interface Task {
   title: string;
   description: string;
   priority: 'low' | 'medium' | 'high';
-  status: 'pending' | 'on-going' | 'completed';
+  status: 'pending' | 'on-going' | 'completed' | 'cancelled';
   createdBy: string;
   assignedTo?: string[];
   createdAt: number;
@@ -23,6 +23,7 @@ export interface Task {
   startedAt?: number;
   completedAt?: number;
   comments?: Comment[];
+  deletedAt?: number;
 }
 
 export interface Handover {
@@ -36,10 +37,11 @@ export interface Handover {
   title: string;
   description: string;
   urgency: 'low' | 'medium' | 'high';
-  status: 'pending' | 'on-going' | 'completed';
+  status: 'pending' | 'on-going' | 'completed' | 'cancelled';
   startedAt?: number;
   completedAt?: number;
   comments?: Comment[];
+  deletedAt?: number;
 }
 
 export type View = 'dashboard' | 'tasks' | 'handover' | 'logs' | 'schedule' | 'users' | 'feedback';
@@ -53,6 +55,7 @@ export interface Feedback {
   message: string;
   timestamp: number;
   status: 'new' | 'investigating' | 'resolved';
+  deletedAt?: number;
 }
 
 export interface Notification {

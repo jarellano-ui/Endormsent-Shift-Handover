@@ -1,5 +1,15 @@
 -- SQL to set up your Supabase database for the Endorsement Matrix App
 
+-- ====================================================================
+-- MIGRATION: Add deletedAt column if it doesn't exist
+-- ====================================================================
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS "deletedAt" BIGINT;
+ALTER TABLE handovers ADD COLUMN IF NOT EXISTS "deletedAt" BIGINT;
+ALTER TABLE feedback ADD COLUMN IF NOT EXISTS "deletedAt" BIGINT;
+
+-- ====================================================================
+-- FULL SETUP (Run once if tables don't exist)
+-- ====================================================================
 -- Users table
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
@@ -24,7 +34,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   updatedAt BIGINT,
   startedAt BIGINT,
   completedAt BIGINT,
-  comments JSONB DEFAULT '[]'::jsonb
+  comments JSONB DEFAULT '[]'::jsonb,
+  deletedAt BIGINT
 );
 
 -- Handovers (Endorsements) table
@@ -42,7 +53,8 @@ CREATE TABLE IF NOT EXISTS handovers (
   status TEXT DEFAULT 'pending',
   startedAt BIGINT,
   completedAt BIGINT,
-  comments JSONB DEFAULT '[]'::jsonb
+  comments JSONB DEFAULT '[]'::jsonb,
+  deletedAt BIGINT
 );
 
 -- Notifications table
@@ -66,7 +78,8 @@ CREATE TABLE IF NOT EXISTS feedback (
   title TEXT NOT NULL,
   message TEXT NOT NULL,
   timestamp BIGINT NOT NULL,
-  status TEXT DEFAULT 'new'
+  status TEXT DEFAULT 'new',
+  deletedAt BIGINT
 );
 
 -- Enable Row Level Security (RLS) or disable as needed for server-side access

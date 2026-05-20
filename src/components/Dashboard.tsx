@@ -18,6 +18,8 @@ import { Task, Handover, View } from '../types';
 import { storage } from '../services/storage';
 import { useAuth } from '../contexts/AuthContext';
 
+import { fetchMonthData, getStaffStatus, StaffSchedule } from '../services/scheduleService';
+
 interface DashboardProps {
   tasks: Task[];
   handovers: Handover[];
@@ -27,29 +29,28 @@ interface DashboardProps {
 
 export default function Dashboard({ tasks, handovers, onNavigate, onUpdate }: DashboardProps) {
   const { user: sessionUser } = useAuth();
-  const [quickTask, setQuickTask] = React.useState('');
+  const [schedules, setSchedules] = React.useState<StaffSchedule[]>([]);
+  const [isLoadingSchedules, setIsLoadingSchedules] = React.useState(true);
 
-  const handleQuickTask = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!quickTask.trim()) return;
-
-    const task: Task = {
-      id: Math.random().toString(36).substr(2, 9),
-      title: quickTask,
-      description: 'Quick entry from dashboard matrix.',
-      priority: 'medium',
-      status: 'pending',
-      createdBy: sessionUser?.name || 'John Arellano',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+  React.useEffect(() => {
+    const loadSchedule = async () => {
+      try {
+        const now = new Date();
+        const currentMonth = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+        const { data } = await fetchMonthData(currentMonth);
+        setSchedules(data);
+      } catch (error) {
+        console.error('Failed to load dashboard schedules:', error);
+      } finally {
+        setIsLoadingSchedules(false);
+      }
     };
+    loadSchedule();
+  }, []);
 
-    await storage.saveTasks([task, ...tasks]);
-    setQuickTask('');
-    onUpdate();
-  };
+  const activeStaff = schedules.filter(s => getStaffStatus(s) === 'Active');
 
-  const pendingTasks = tasks.filter(t => t.status !== 'completed');
+  const pendingTasks = tasks.filter(t => t.status === 'pending' || t.status === 'on-going');
   const urgentTasks = pendingTasks.filter(t => t.priority === 'high');
   const lastHandover = [...handovers].sort((a, b) => b.timestamp - a.timestamp)[0];
 
@@ -81,7 +82,7 @@ export default function Dashboard({ tasks, handovers, onNavigate, onUpdate }: Da
           <div className="p-2 bg-[#F1F7EB] rounded-xl text-[#4A773C]">
             <Users size={20} />
           </div>
-          <span className="text-xs font-black uppercase tracking-widest text-gray-600">IT Team Monitor</span>
+          <span className="text-xs font-black uppercase tracking-widest text-gray-600">IT Team Monitoring</span>
           <ArrowRightLeft size={14} className="text-gray-300 group-hover:text-[#4A773C] transition-all ml-2" />
         </button>
       </div>
@@ -146,9 +147,9 @@ export default function Dashboard({ tasks, handovers, onNavigate, onUpdate }: Da
                               </span>
                             )}
                             {lastHandover.completedAt && (
-                              <span className="text-[9px] font-black uppercase text-emerald-600 tracking-widest bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 flex items-center gap-1">
+                              <span className="text-[9px] font-black uppercase text-emerald-600 tracking-widest bg-[#D1FAE5] px-2 py-0.5 rounded border border-[#A7F3D0] flex items-center gap-1">
                                 <CheckCircle2 size={10} />
-                                Done: {formatTime(lastHandover.completedAt)}
+                                Resolution Time: {formatTime(lastHandover.completedAt)}
                               </span>
                             )}
                           </div>
@@ -162,7 +163,7 @@ export default function Dashboard({ tasks, handovers, onNavigate, onUpdate }: Da
                       <span className={`px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest border shadow-sm ${
                         lastHandover.urgency === 'high' ? 'bg-rose-50 text-rose-500 border-rose-100' :
                         lastHandover.urgency === 'medium' ? 'bg-amber-50 text-amber-500 border-amber-100' :
-                        'bg-emerald-50 text-emerald-500 border-emerald-100'
+                        'bg-[#D1FAE5] text-[#065F46] border-[#A7F3D0]'
                       }`}>
                         {lastHandover.urgency} Priority
                       </span>
@@ -247,24 +248,41 @@ export default function Dashboard({ tasks, handovers, onNavigate, onUpdate }: Da
 
           <div className="hc-card p-6">
             <h4 className="font-black mb-5 flex items-center gap-2 text-xs uppercase tracking-wider text-gray-700">
-              <Plus size={18} className="text-[#88C13E]" />
-              Direct Entry
+              <Activity size={18} className="text-[#4A773C]" />
+              Active Engineers
             </h4>
-            <form onSubmit={handleQuickTask} className="space-y-4">
-              <input 
-                type="text" 
-                value={quickTask}
-                onChange={e => setQuickTask(e.target.value)}
-                placeholder="Log urgent requirement..."
-                className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-sm text-gray-800 focus:bg-white focus:ring-2 focus:ring-[#88C13E] outline-none transition-all placeholder:text-gray-400"
-              />
+            <div className="space-y-3">
+              {isLoadingSchedules ? (
+                <div className="py-4 flex items-center justify-center">
+                  <div className="w-5 h-5 border-2 border-[#4A773C]/20 border-t-[#4A773C] rounded-full animate-spin" />
+                </div>
+              ) : activeStaff.length > 0 ? (
+                activeStaff.map((staff, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-2xl border border-gray-100/50">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-[#4A773C] text-white flex items-center justify-center font-black text-[10px]">
+                        {(staff.name || '??').split(' ').map(n => n?.[0] || '').join('').toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="text-xs font-black text-gray-900">{staff.name}</p>
+                        <p className="text-[8px] font-black uppercase tracking-widest text-[#4A773C]">Online</p>
+                      </div>
+                    </div>
+                    <div className="w-1.5 h-1.5 rounded-full bg-[#88C13E] animate-pulse" />
+                  </div>
+                ))
+              ) : (
+                <div className="py-8 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">No active shifts</p>
+                </div>
+              )}
               <button 
-                type="submit"
-                className="w-full text-[10px] text-gray-400 hover:text-[#4A773C] font-black uppercase tracking-widest transition-colors text-center"
+                onClick={() => onNavigate('schedule')}
+                className="w-full mt-2 text-[10px] text-gray-400 hover:text-[#4A773C] font-black uppercase tracking-widest transition-colors text-center"
               >
-                Access Full Task Matrix →
+                View Full Team Matrix →
               </button>
-            </form>
+            </div>
           </div>
         </div>
       </div>

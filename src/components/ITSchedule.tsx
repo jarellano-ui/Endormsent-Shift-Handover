@@ -20,27 +20,18 @@ import { motion, AnimatePresence } from 'motion/react';
 import Papa from 'papaparse';
 import { IT_TEAM } from '../constants';
 
-interface StaffSchedule {
-  name: string;
-  monthlySchedule: {
-    [dateKey: string]: string; // Key format: YYYY-MM-DD
-  }
-}
-
-const getProxyUrl = (monthName: string) => {
-  return `/api/proxy-sheet?month=${encodeURIComponent(monthName)}`;
-};
-
-const getDateISO = (year: number, month: number, day: number) => {
-  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-};
+import { 
+  fetchMonthData, 
+  getStaffStatus, 
+  StaffSchedule,
+  getDateISO
+} from '../services/scheduleService';
 
 // Initial fallback names mapping
 const INITIAL_DATA: StaffSchedule[] = [
   { name: 'Errol', monthlySchedule: {} },
   { name: 'Ron', monthlySchedule: {} },
   { name: 'Paulo', monthlySchedule: {} },
-  { name: 'Kellie Joyce Anne Perez', monthlySchedule: {} },
   { name: 'Rex', monthlySchedule: {} },
   { name: 'Kristel', monthlySchedule: {} },
   { name: 'Kiel', monthlySchedule: {} },
@@ -91,13 +82,9 @@ export default function ITSchedule() {
       // Merge all months into the schedule state
       setSchedules(prev => {
         const merged = [...prev];
-        allResults.forEach(({ monthName, data }) => {
+        allResults.forEach(({ data }) => {
           if (!data || data.length === 0) return;
           
-          const monthDate = new Date(monthName);
-          const year = monthDate.getFullYear();
-          const monthIdx = monthDate.getMonth();
-
           data.forEach(fetchedStaff => {
             let existing = merged.find(s => s.name.toLowerCase() === fetchedStaff.name.toLowerCase());
             if (!existing) {
@@ -105,11 +92,8 @@ export default function ITSchedule() {
               merged.push(existing);
             }
             
-            // Overwrite/update with new monthly data using YYYY-MM-DD keys
-            Object.entries(fetchedStaff.monthlySchedule).forEach(([day, shift]) => {
-              const dateKey = getDateISO(year, monthIdx, parseInt(day));
-              existing!.monthlySchedule[dateKey] = shift as string;
-            });
+            // Overwrite/update with new monthly data
+            Object.assign(existing.monthlySchedule, fetchedStaff.monthlySchedule);
           });
         });
         return [...merged];
@@ -124,131 +108,17 @@ export default function ITSchedule() {
     }
   };
 
-  const fetchMonthData = async (monthName: string) => {
-    try {
-      const url = getProxyUrl(monthName);
-      const response = await fetch(url);
-      if (!response.ok) return { monthName, data: [] };
-      
-      const csvData = await response.text();
-      
-      return new Promise<{monthName: string, data: any[]}>((resolve, reject) => {
-        Papa.parse(csvData, {
-          complete: (results) => {
-            const rows = (results.data as string[][]).filter(r => r.length >= 7 && r.some(c => c.trim().length > 0));
-            if (rows.length < 2) return resolve({ monthName, data: [] });
 
-            let headerRowIndex = rows.findIndex(r => r[0]?.toLowerCase().includes('date') || r[1]?.toLowerCase().includes('day'));
-            if (headerRowIndex === -1) {
-              const firstDataIndex = rows.findIndex(r => r[0] === '1');
-              headerRowIndex = firstDataIndex > 0 ? firstDataIndex - 1 : 1;
-            }
-
-            const headers = rows[headerRowIndex];
-            const personnelNames = headers.slice(2, 9);
-            const dataStartIndex = headerRowIndex + 1; 
-
-            // Hard keywords to filter out non-names that might appear in title rows
-            const BLACKLIST_KEYWORDS = ['SCHEDULE', 'MANILA', 'REGULAR', 'HCIT', 'DATE', 'DAY', 'SUPPORT'];
-
-            const monthData = personnelNames
-              .map((name, pIdx) => {
-                const cleanedName = (name.trim().split('\n')[0] || '').trim();
-                // Skip if name is too short, empty, or contains blacklist words
-                const isInvalid = !cleanedName || 
-                                cleanedName.length < 2 || 
-                                BLACKLIST_KEYWORDS.some(k => cleanedName.toUpperCase().includes(k));
-                
-                return {
-                  name: cleanedName || `Unknown-${pIdx}`,
-                  isInvalid,
-                  originalIdx: pIdx + 2, // Column C is index 2
-                  monthlySchedule: {} as {[day: number]: string}
-                };
-              })
-              .filter(staff => !staff.isInvalid);
-
-            for (let i = dataStartIndex; i < rows.length; i++) {
-              const row = rows[i];
-              const dateStr = row[0]?.trim();
-              if (!dateStr || isNaN(parseInt(dateStr))) continue;
-              const dayNum = parseInt(dateStr);
-              if (dayNum < 1 || dayNum > 31) continue;
-
-              monthData.forEach((staff) => {
-                const shift = row[staff.originalIdx];
-                if (shift) {
-                  staff.monthlySchedule[dayNum] = shift.trim();
-                }
-              });
-            }
-            resolve({ monthName, data: monthData });
-          },
-          error: (err) => reject(err)
-        });
-      });
-    } catch (e) {
-      return { monthName, data: [] };
+  const getStatusRank = (status: string) => {
+    switch (status) {
+      case 'Active': return 0;
+      case 'Next Shift': return 1;
+      case 'Offline': return 2;
+      case 'Restday': return 3;
+      case 'PTO': return 4;
+      case 'OFFSET': return 5;
+      default: return 6;
     }
-  };
-
-  const parseShiftTime = (shiftStr: string) => {
-    if (!shiftStr || shiftStr === 'OFF' || shiftStr === 'PTO' || shiftStr.includes('OFFSET')) return null;
-    
-    const timeMatch = shiftStr.match(/(\d+)(AM|PM)-(\d+)(AM|PM)/i);
-    if (!timeMatch) return null;
-
-    const convertTo24h = (hours: number, modifier: string) => {
-      let h = hours;
-      if (h === 12) h = (modifier.toUpperCase() === 'PM' ? 12 : 0);
-      else if (modifier.toUpperCase() === 'PM') h += 12;
-      return { hours: h, minutes: 0 };
-    };
-
-    return {
-      start: convertTo24h(parseInt(timeMatch[1]), timeMatch[2]),
-      end: convertTo24h(parseInt(timeMatch[3]), timeMatch[4])
-    };
-  };
-
-  const getStaffStatus = (staff: StaffSchedule) => {
-    const now = currentTime;
-    const todayKey = getDateISO(now.getFullYear(), now.getMonth(), now.getDate());
-    
-    const yesterdayDate = new Date(now);
-    yesterdayDate.setDate(now.getDate() - 1);
-    const yesterdayKey = getDateISO(yesterdayDate.getFullYear(), yesterdayDate.getMonth(), yesterdayDate.getDate());
-    
-    const todayShift = staff.monthlySchedule[todayKey];
-    const yesterdayShift = staff.monthlySchedule[yesterdayKey];
-
-    if (todayShift === 'PTO') return 'PTO';
-    if (todayShift && (todayShift.includes('OFFSET') || todayShift.includes('OFFSET'))) return 'OFFSET';
-
-    const times = parseShiftTime(todayShift);
-    if (times) {
-      const start = new Date(now);
-      start.setHours(times.start.hours, 0, 0, 0);
-      const end = new Date(now);
-      end.setHours(times.end.hours, 0, 0, 0);
-
-      if (times.end.hours < times.start.hours) { 
-        if (now >= start) return 'Active';
-      } else { 
-        if (now >= start && now < end) return 'Active';
-      }
-    }
-
-    const yTimes = parseShiftTime(yesterdayShift);
-    if (yTimes && yTimes.end.hours < yTimes.start.hours) {
-      const yEnd = new Date(now);
-      yEnd.setHours(yTimes.end.hours, 0, 0, 0);
-      if (now < yEnd) return 'Active';
-    }
-
-    if (todayShift === 'OFF') return 'Restday';
-
-    return 'Offline';
   };
 
   const filteredStaff = schedules.filter(s => 
@@ -256,12 +126,17 @@ export default function ITSchedule() {
   ).sort((a, b) => {
     const aStatus = getStaffStatus(a);
     const bStatus = getStaffStatus(b);
-    if (aStatus === 'Active' && bStatus !== 'Active') return -1;
-    if (aStatus !== 'Active' && bStatus === 'Active') return 1;
+    const aRank = getStatusRank(aStatus);
+    const bRank = getStatusRank(bStatus);
+    
+    if (aRank !== bRank) return aRank - bRank;
     return a.name.localeCompare(b.name);
   });
 
   const activeCount = schedules.filter(s => getStaffStatus(s) === 'Active').length;
+
+  const startOfWeek = new Date(currentTime);
+  startOfWeek.setDate(currentTime.getDate() - currentTime.getDay());
 
   return (
     <div className="space-y-6 pb-8">
@@ -333,10 +208,28 @@ export default function ITSchedule() {
           <table className="w-full text-left border-collapse min-w-[1000px]">
             <thead>
               <tr className="bg-gray-50/50 border-b border-gray-100">
-                <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-gray-400">Personnel</th>
-                <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-gray-400">Live Status</th>
-                <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-gray-400">Time Schedule</th>
-                <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-gray-400">Monthly Matrix</th>
+                <th className="px-8 py-3 text-[10px] font-black uppercase tracking-widest text-gray-400">Personnel</th>
+                <th className="px-8 py-3 text-[10px] font-black uppercase tracking-widest text-gray-400">Live Status</th>
+                <th className="px-8 py-3 text-[10px] font-black uppercase tracking-widest text-gray-400">Time Schedule</th>
+                <th className="px-8 py-3 text-[10px] font-black uppercase tracking-widest text-gray-400">
+                  <div className="mb-3 text-center">Monthly Matrix</div>
+                  <div className="flex gap-1.5 justify-center">
+                    {[0, 1, 2, 3, 4, 5, 6].map(dayOffset => {
+                      const targetDate = new Date(startOfWeek);
+                      targetDate.setDate(startOfWeek.getDate() + dayOffset);
+                      const dayName = targetDate.toLocaleDateString('en-US', { weekday: 'short' });
+                      const isToday = targetDate.toDateString() === currentTime.toDateString();
+                      return (
+                        <div 
+                          key={`header-day-${dayOffset}`} 
+                          className={`w-11 text-center transition-colors ${isToday ? 'text-[#4A773C] font-black underline underline-offset-4 decoration-2' : 'text-gray-400 font-bold'}`}
+                        >
+                          {dayName.toUpperCase()}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -346,76 +239,90 @@ export default function ITSchedule() {
                 const currentShift = staff.monthlySchedule[isoToday];
 
                 return (
-                   <motion.tr 
+                  <motion.tr 
                     key={`${staff.name}-${idx}`}
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    className={`group transition-all hover:bg-[#F1F7EB]/30 ${status === 'Offline' || status === 'Restday' || status === 'PTO' ? 'opacity-40 grayscale-[0.9]' : ''}`}
+                    className={`group transition-all ${
+                      status === 'Active' ? 'hover:bg-[#F1F7EB]/30' : 
+                      status === 'Next Shift' ? 'bg-[#6D28D9]/5 hover:bg-[#6D28D9]/10 border-l-4 border-l-[#6D28D9]' :
+                      status === 'Offline' || status === 'Restday' || status === 'PTO' ? 'opacity-40 grayscale-[0.9] hover:bg-gray-50/50' : ''
+                    }`}
                   >
-                    <td className="px-8 py-6">
-                      <div className="flex items-center gap-4">
-                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-sm transition-all shadow-sm ${
-                          status === 'Active' ? 'bg-[#4A773C] text-white shadow-[#4A773C]/20 border-2 border-white' : 'bg-gray-100 text-gray-400'
+                    <td className="px-8 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-black text-[10px] transition-all shadow-sm ${
+                          status === 'Active' ? 'bg-[#4A773C] text-white shadow-[#4A773C]/20 border-2 border-white' : 
+                          status === 'Next Shift' ? 'bg-[#6D28D9] text-white shadow-[#6D28D9]/20 border-2 border-white' :
+                          'bg-gray-100 text-gray-400'
                         }`}>
                           {staff.name.split(' ').map(n => n[0]).join('')}
                         </div>
                         <div>
-                          <p className="font-black text-gray-900 group-hover:text-[#4A773C] transition-colors">{staff.name}</p>
-                          <p className="text-[9px] font-black uppercase tracking-widest text-gray-400">IT Ops Manila</p>
+                          <p className={`font-black text-xs transition-colors ${status === 'Next Shift' ? 'text-[#6D28D9]' : 'text-gray-900 group-hover:text-[#4A773C]'}`}>{staff.name}</p>
+                          <p className="text-[8px] font-black uppercase tracking-widest text-gray-400">IT Ops Manila</p>
                         </div>
                       </div>
                     </td>
-                    <td className="px-8 py-6">
+                    <td className="px-8 py-3">
                       <div className="flex items-center gap-3">
-                        <div className={`relative flex items-center justify-center w-3 h-3`}>
+                        <div className={`relative flex items-center justify-center w-2.5 h-2.5`}>
                           {status === 'Active' && <div className={`absolute inset-0 rounded-full animate-ping bg-[#88C13E]/40`} />}
-                          <div className={`w-2 h-2 rounded-full ${
+                          {status === 'Next Shift' && <div className={`absolute inset-0 rounded-full animate-pulse bg-[#6D28D9]/40`} />}
+                          <div className={`w-1.5 h-1.5 rounded-full ${
                             status === 'Active' ? 'bg-[#88C13E]' : 
+                            status === 'Next Shift' ? 'bg-[#6D28D9]' :
                             status === 'OFFSET' ? 'bg-indigo-400' :
                             'bg-gray-300'
                           }`} />
                         </div>
-                        <span className={`text-[10px] font-black uppercase tracking-widest ${
+                        <span className={`text-[9px] font-black uppercase tracking-widest ${
                           status === 'Active' ? 'text-[#4A773C]' : 
+                          status === 'Next Shift' ? 'text-[#6D28D9]' :
                           status === 'OFFSET' ? 'text-indigo-600' :
                           'text-gray-400'
                         }`}>
-                          {status === 'Active' ? 'Active Now' : status}
+                          {status === 'Active' ? 'Active Now' : status === 'Next Shift' ? 'Incoming Shift' : status}
                         </span>
                       </div>
                     </td>
-                    <td className="px-8 py-6">
-                      <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-2 text-xs font-black text-gray-600">
-                          <Clock size={12} className="text-gray-400" />
+                    <td className="px-8 py-3">
+                      <div className="flex flex-col gap-0.5">
+                        <div className={`flex items-center gap-1.5 text-[11px] font-black ${status === 'Next Shift' ? 'text-[#6D28D9]' : 'text-gray-600'}`}>
+                          <Clock size={10} className={status === 'Next Shift' ? 'text-[#6D28D9]/60' : 'text-gray-400'} />
                           {currentShift === 'OFF' ? 'RESTDAY' : currentShift === 'PTO' ? 'ON LEAVE' : currentShift?.split(': ')[1] || currentShift || '-'}
                         </div>
-                        <p className="text-[9px] font-bold text-gray-300 uppercase tracking-tighter italic">PHT (UTC+8)</p>
+                        <p className="text-[8px] font-bold text-gray-300 uppercase tracking-tighter italic">PHT (UTC+8)</p>
                       </div>
                     </td>
-                    <td className="px-8 py-6">
-                      <div className="flex gap-2">
-                        {[1, 2, 3, 4, 5, 6, 7].map(offset => {
-                          const targetDate = new Date(currentTime);
-                          targetDate.setDate(currentTime.getDate() + (offset - 4));
+                    <td className="px-8 py-3">
+                      <div className="flex gap-1.5 justify-center">
+                        {[0, 1, 2, 3, 4, 5, 6].map(dayOffset => {
+                          const targetDate = new Date(startOfWeek);
+                          targetDate.setDate(startOfWeek.getDate() + dayOffset);
                           const dateNum = targetDate.getDate();
                           const isoDate = getDateISO(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
                           const shift = staff.monthlySchedule[isoDate] || 'OFF';
                           const isOff = shift === 'OFF';
                           const isPTO = shift === 'PTO';
-                          const isToday = isoDate === getDateISO(currentTime.getFullYear(), currentTime.getMonth(), currentTime.getDate());
+                          const isToday = targetDate.toDateString() === currentTime.toDateString();
 
                           return (
                             <div 
                               key={`${staff.name}-${targetDate.getTime()}`}
-                              className={`w-14 h-14 flex flex-col items-center justify-center rounded-2xl transition-all border-2 ${
-                                isPTO || isOff ? 'bg-gray-50 text-gray-300 border-gray-100' :
-                                'bg-[#4A773C] text-white border-[#3d6331] shadow-xl shadow-[#4A773C]/20'
-                              } ${isToday ? 'ring-4 ring-offset-2 ring-[#88C13E] scale-110 z-10' : 'hover:scale-105'}`}
+                              className={`w-11 h-11 flex flex-col items-center justify-center rounded-xl transition-all border-2 ${
+                                !isToday 
+                                  ? 'bg-gray-100 text-gray-600 border-gray-200/50' 
+                                  : isPTO || isOff 
+                                    ? 'bg-gray-100 text-gray-500 border-gray-200' 
+                                    : status === 'Next Shift' 
+                                      ? 'bg-[#6D28D9] text-white border-[#5B21B6] shadow-xl shadow-[#6D28D9]/20'
+                                      : 'bg-[#4A773C] text-white border-[#3d6331] shadow-xl shadow-[#4A773C]/20'
+                              } ${isToday ? `ring-2 ring-offset-1 ${status === 'Next Shift' ? 'ring-[#6D28D9]/40' : 'ring-[#88C13E]'} scale-105 z-10` : 'hover:scale-105'}`}
                               title={`${dateNum}: ${shift}`}
                             >
-                              <span className="text-[10px] font-black opacity-80 leading-none mb-1.5">{dateNum}</span>
-                              <span className="text-sm leading-none font-black tracking-tighter uppercase">
+                              <span className="text-[8px] font-black opacity-80 leading-none mb-1">{dateNum}</span>
+                              <span className="text-xs leading-none font-black tracking-tighter uppercase">
                                 {shift === 'OFF' ? '✖' : (shift.includes(':') ? shift.split(':')[0] : shift[0])}
                               </span>
                             </div>

@@ -13,12 +13,15 @@ import {
   Activity,
   CheckCircle2,
   Clock,
+  Pause,
+  Play,
+  XCircle,
   Download,
   Table as TableIcon,
   LayoutList,
-  CheckCircle,
-  XCircle,
-  Filter
+  Filter,
+  Trash2,
+  MessageSquare
 } from 'lucide-react';
 import { Handover, Task, Comment } from '../types';
 import { storage } from '../services/storage';
@@ -31,12 +34,26 @@ interface HandoverLogsProps {
   handovers: Handover[];
   tasks: Task[];
   onUpdate: () => void;
+  initialSelectedId?: string | null;
 }
 
-export default function HandoverLogs({ handovers, tasks, onUpdate }: HandoverLogsProps) {
+export default function HandoverLogs({ handovers, tasks, onUpdate, initialSelectedId }: HandoverLogsProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (initialSelectedId) {
+      setExpandedId(initialSelectedId);
+      // Optional: scroll to the element
+      setTimeout(() => {
+        const element = document.getElementById(initialSelectedId);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 100);
+    }
+  }, [initialSelectedId]);
   const [isSpreadsheetView, setIsSpreadsheetView] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'on-going' | 'completed'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'completed' | 'cancelled'>('all');
   const [typeFilter, setTypeFilter] = useState<'all' | 'protocol' | 'task'>('all');
   const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week'>('all');
 
@@ -102,7 +119,7 @@ export default function HandoverLogs({ handovers, tasks, onUpdate }: HandoverLog
     title: string;
     description: string;
     urgency: 'low' | 'medium' | 'high';
-    status: 'pending' | 'on-going' | 'completed';
+    status: 'pending' | 'on-going' | 'completed' | 'cancelled';
     startedAt?: number;
     completedAt?: number;
     comments?: Comment[];
@@ -139,7 +156,7 @@ export default function HandoverLogs({ handovers, tasks, onUpdate }: HandoverLog
   ];
 
   const filteredLogs = allLogs.filter(l => {
-    const matchesStatus = statusFilter === 'all' ? true : l.status === statusFilter;
+    const matchesStatus = statusFilter === 'all' ? true : (statusFilter === 'pending' ? (l.status === 'pending' || l.status === 'on-going') : l.status === statusFilter);
     const matchesType = typeFilter === 'all' ? true : l.type === typeFilter;
     
     let matchesDate = true;
@@ -159,15 +176,39 @@ export default function HandoverLogs({ handovers, tasks, onUpdate }: HandoverLog
   });
 
   const sortedLogs = [...filteredLogs].sort((a, b) => b.timestamp - a.timestamp);
+  
+  const deleteLogItem = async (compositeId: string, type: 'protocol' | 'task') => {
+    const logItem = allLogs.find(l => l.id === compositeId);
+    const originalId = logItem?.meta?.originalId;
+    if (!originalId) return;
 
-  const toggleStatus = async (compositeId: string, type: 'protocol' | 'task', targetStatus?: 'pending' | 'on-going' | 'completed') => {
+    if (type === 'protocol') {
+      const updated = handovers.filter(h => h.id !== originalId);
+      await storage.updateHandovers(updated);
+    } else {
+      const updated = tasks.filter(t => t.id !== originalId);
+      await storage.saveTasks(updated);
+    }
+    onUpdate();
+  };
+
+  const toggleStatus = async (compositeId: string, type: 'protocol' | 'task', targetStatus?: 'pending' | 'on-going' | 'completed' | 'cancelled') => {
     const logItem = allLogs.find(l => l.id === compositeId);
     const originalId = logItem?.meta?.originalId;
     if (!originalId || !logItem) return;
 
     if (logItem.status === 'completed') return; // Locked
 
-    let nextStatus: 'pending' | 'on-going' | 'completed' = logItem.status === 'pending' ? 'on-going' : 'completed';
+    // Check ownership for cancellation
+    if (targetStatus === 'cancelled') {
+      const isOwner = type === 'protocol' 
+        ? logItem.meta?.endorsedBy?.includes(currentUserName)
+        : logItem.meta?.createdBy === currentUserName;
+      
+      if (!isOwner) return;
+    }
+
+    let nextStatus: 'pending' | 'on-going' | 'completed' | 'cancelled' = logItem.status === 'pending' ? 'on-going' : 'completed';
     if (targetStatus) nextStatus = targetStatus;
 
     const now = Date.now();
@@ -272,9 +313,9 @@ export default function HandoverLogs({ handovers, tasks, onUpdate }: HandoverLog
 
           {/* Status Filter */}
           <div className="flex items-center bg-gray-50/50 p-1 rounded-xl border border-gray-100">
-            {['all', 'pending', 'on-going', 'completed'].map((f) => (
+            {['all', 'pending', 'completed', 'cancelled'].map((f, idx) => (
               <button
-                key={f}
+                key={`${f}-${idx}`}
                 onClick={() => setStatusFilter(f as any)}
                 className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
                   statusFilter === f 
@@ -282,16 +323,16 @@ export default function HandoverLogs({ handovers, tasks, onUpdate }: HandoverLog
                     : 'text-gray-400 hover:text-gray-600'
                 }`}
               >
-                {f === 'on-going' ? 'Ongoing' : f}
+                {f}
               </button>
             ))}
           </div>
 
           {/* Type Filter */}
           <div className="flex items-center bg-gray-50/50 p-1 rounded-xl border border-gray-100">
-            {['all', 'protocol', 'task'].map((f) => (
+            {['all', 'protocol', 'task'].map((f, idx) => (
               <button
-                key={f}
+                key={`${f}-${idx}`}
                 onClick={() => setTypeFilter(f as any)}
                 className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
                   typeFilter === f 
@@ -381,7 +422,7 @@ export default function HandoverLogs({ handovers, tasks, onUpdate }: HandoverLog
                         <span className={`px-2 py-1 rounded-lg text-[8px] font-black uppercase border ${
                           log.urgency === 'high' ? 'bg-rose-50 text-rose-500 border-rose-100' :
                           log.urgency === 'medium' ? 'bg-amber-50 text-amber-500 border-amber-100' :
-                          'bg-emerald-50 text-emerald-500 border-emerald-100'
+                          'bg-[#D1FAE5] text-[#065F46] border-[#A7F3D0]'
                         }`}>
                           {log.urgency}
                         </span>
@@ -404,23 +445,48 @@ export default function HandoverLogs({ handovers, tasks, onUpdate }: HandoverLog
                         </div>
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-center justify-end gap-3">
+                          {log.status !== 'completed' && (() => {
+                            const isOwner = log.type === 'protocol' 
+                              ? log.meta?.endorsedBy?.includes(currentUserName)
+                              : log.meta?.createdBy === currentUserName;
+                            
+                            return (
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (isOwner) {
+                                    toggleStatus(log.id, log.type, log.status === 'cancelled' ? 'pending' : 'cancelled');
+                                  }
+                                }}
+                                disabled={!isOwner}
+                                className={`w-9 h-9 flex items-center justify-center rounded-xl transition-all border ${
+                                  log.status === 'cancelled'
+                                    ? 'bg-rose-600 text-white border-rose-700 shadow-md shadow-rose-500/30'
+                                    : isOwner
+                                    ? 'text-gray-300 hover:text-rose-500 border-gray-100 hover:bg-rose-50'
+                                    : 'text-gray-200 border-gray-50 cursor-not-allowed opacity-50'
+                                }`}
+                                title={!isOwner ? "Only owners can cancel" : log.status === 'cancelled' ? "Revert" : "Cancel"}
+                              >
+                                <XCircle size={16} strokeWidth={3} />
+                              </button>
+                            );
+                          })()}
+
                           <button 
                             onClick={(e) => {
                               e.stopPropagation();
-                              toggleStatus(log.id, log.type);
+                              toggleStatus(log.id, log.type, 'completed');
                             }}
-                            className={`p-2 rounded-lg transition-all ${
-                              log.status === 'completed' 
-                                ? 'bg-emerald-50 text-emerald-600 cursor-not-allowed opacity-50' 
-                                : log.status === 'on-going'
-                                ? 'bg-blue-50 text-blue-600 hover:bg-blue-100'
-                                : 'bg-orange-50 text-orange-600 hover:bg-orange-100'
+                            className={`w-9 h-9 flex items-center justify-center rounded-xl transition-all border ${
+                              log.status === 'completed'
+                                ? 'bg-emerald-600 text-white border-emerald-700 shadow-md shadow-emerald-500/30'
+                                : 'text-gray-300 hover:text-emerald-500 border-gray-100 hover:bg-emerald-50'
                             }`}
-                            disabled={log.status === 'completed'}
-                            title={log.status === 'completed' ? 'Action Completed' : log.status === 'on-going' ? 'Mark as Completed' : 'Mark as Ongoing'}
+                            title="Complete"
                           >
-                            <CheckCircle size={14} />
+                            <CheckCircle2 size={16} strokeWidth={3} />
                           </button>
                         </div>
                       </td>
@@ -433,6 +499,7 @@ export default function HandoverLogs({ handovers, tasks, onUpdate }: HandoverLog
             sortedLogs.map((log, idx) => (
             <div 
               key={`${log.id}-${idx}`}
+              id={log.id}
               className={`hc-card overflow-hidden transition-all hover:bg-white hover:shadow-md group ${
                 log.type === 'task' ? 'border-l-4 border-l-blue-400' : 'border-l-4 border-l-[#88C13E]'
               }`}
@@ -461,15 +528,17 @@ export default function HandoverLogs({ handovers, tasks, onUpdate }: HandoverLog
                       <span className={`px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest border shadow-sm ${
                         log.urgency === 'high' ? 'bg-rose-50 text-rose-500 border-rose-100' :
                         log.urgency === 'medium' ? 'bg-amber-50 text-amber-500 border-amber-100' :
-                        'bg-emerald-50 text-emerald-500 border-emerald-100'
+                        'bg-[#D1FAE5] text-[#065F46] border-[#A7F3D0]'
                       }`}>
                         {log.urgency}
                       </span>
                       <span className={`px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest border shadow-sm ${
                         log.status === 'completed' 
-                          ? 'bg-emerald-50 text-emerald-600 border-emerald-100' 
+                          ? 'bg-[#D1FAE5] text-[#065F46] border-[#A7F3D0]' 
                           : log.status === 'on-going'
-                          ? 'bg-blue-50 text-blue-600 border-blue-100'
+                          ? 'bg-blue-50 text-blue-500 border-blue-100'
+                          : log.status === 'cancelled'
+                          ? 'bg-rose-50 text-rose-600 border-rose-100'
                           : 'bg-orange-50 text-orange-600 border-orange-100'
                       }`}>
                         {log.status === 'on-going' ? 'Ongoing' : log.status}
@@ -519,14 +588,12 @@ export default function HandoverLogs({ handovers, tasks, onUpdate }: HandoverLog
                         <span className="text-[9px] font-black uppercase text-gray-400 tracking-widest bg-gray-50 px-2 py-0.5 rounded border border-gray-100">
                           Created: {new Date(log.timestamp).toLocaleDateString()} {formatTime(log.timestamp)}
                         </span>
-                        {log.startedAt && (
-                          <span className="text-[9px] font-black uppercase text-blue-600 tracking-widest bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
-                            SLA: {formatDuration((log.completedAt || Date.now()) - log.startedAt)}
-                          </span>
-                        )}
+                        <span className="text-[9px] font-black uppercase text-blue-600 tracking-widest bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                          SLA: {formatDuration((log.completedAt || Date.now()) - log.timestamp)}
+                        </span>
                         {log.completedAt && (
                           <span className="text-[9px] font-black uppercase text-emerald-600 tracking-widest bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
-                            Done: {formatTime(log.completedAt)}
+                            Resolution Time: {new Date(log.completedAt).toLocaleDateString()} {formatTime(log.completedAt)}
                           </span>
                         )}
                       </div>
@@ -534,61 +601,77 @@ export default function HandoverLogs({ handovers, tasks, onUpdate }: HandoverLog
                   </div>
                 </div>
 
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <div className="flex flex-col items-center gap-1">
-                      <button
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3">
+                      {log.status !== 'completed' && (() => {
+                        const isOwner = log.type === 'protocol' 
+                          ? log.meta?.endorsedBy?.includes(currentUserName)
+                          : log.meta?.createdBy === currentUserName;
+                        
+                        return (
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (isOwner) {
+                                toggleStatus(log.id, log.type, log.status === 'cancelled' ? 'pending' : 'cancelled');
+                              }
+                            }}
+                            disabled={!isOwner}
+                            className={`w-11 h-11 flex items-center justify-center rounded-2xl transition-all border ${
+                              log.status === 'cancelled'
+                                ? 'bg-rose-600 text-white border-rose-700 shadow-md shadow-rose-500/30' 
+                                : isOwner
+                                ? 'text-gray-300 hover:text-rose-500 border-gray-100 hover:bg-rose-50'
+                                : 'text-gray-200 border-gray-50 cursor-not-allowed opacity-50'
+                            }`}
+                            title={!isOwner ? "Only owners can cancel" : log.status === 'cancelled' ? "Revert Cancellation" : "Cancel"}
+                          >
+                            <XCircle size={20} strokeWidth={3} />
+                          </button>
+                        );
+                      })()}
+
+                      <button 
                         onClick={(e) => {
                           e.stopPropagation();
-                          toggleStatus(log.id, log.type);
+                          toggleStatus(log.id, log.type, 'completed');
                         }}
-                        disabled={log.status === 'completed'}
-                        className={`p-2.5 rounded-xl transition-all ${
+                        className={`w-11 h-11 flex items-center justify-center rounded-2xl transition-all border ${
                           log.status === 'completed' 
-                            ? 'bg-emerald-50 text-emerald-600 shadow-sm border border-emerald-100 cursor-not-allowed opacity-50' 
-                            : log.status === 'on-going'
-                            ? 'bg-blue-50 text-blue-600 border border-blue-100 hover:bg-blue-100'
-                            : 'bg-orange-50 text-orange-600 border border-orange-100 hover:bg-orange-100'
+                            ? 'bg-emerald-600 text-white border-emerald-700 shadow-md shadow-emerald-500/30' 
+                            : 'text-gray-300 hover:text-emerald-500 border-gray-100 hover:bg-emerald-50'
                         }`}
-                        title={log.status === 'completed' ? 'Action Completed' : log.status === 'on-going' ? 'Mark as Completed' : 'Start Action'}
+                        title="Complete"
                       >
-                        {log.status === 'on-going' ? (
-                           <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 4, ease: "linear" }}>
-                              <Clock size={14} />
-                           </motion.div>
-                        ) : (
-                          <CheckCircle size={18} />
-                        )}
+                        <CheckCircle2 size={20} strokeWidth={3} />
                       </button>
-                      
-                      {log.status === 'on-going' && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleStatus(log.id, log.type, 'pending');
-                          }}
-                          className="text-[8px] font-black uppercase text-gray-400 hover:text-rose-500 transition-colors"
-                        >
-                          Pause
-                        </button>
-                      )}
                     </div>
+
+                  {sessionUser?.role === 'ADMIN' && (
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteLogItem(log.id, log.type);
+                      }}
+                      className="p-2 text-gray-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                      title="Delete entry"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  )}
+
+                  <div className="w-px h-8 bg-gray-100" />
+
+                  <div className="flex items-center gap-1.5 text-gray-400 px-1">
+                    <MessageSquare size={12} />
+                    <span className="text-[10px] font-bold">{log.comments?.length || 0}</span>
                   </div>
 
-                  <div className="hidden md:flex flex-col items-end min-w-[100px] cursor-pointer" onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}>
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Context</p>
-                    <p className="font-black text-gray-600">{log.type === 'protocol' ? 'Endorsement Task' : 'Standalone Task'}</p>
-                    {log.type === 'protocol' && (
-                      <p className="text-[8px] font-black text-[#88C13E] uppercase tracking-widest mt-1">
-                        {log.meta?.taskIds?.length || 0} Linked Items
-                      </p>
-                    )}
-                  </div>
                   <button 
                     onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}
-                    className={`p-2 rounded-full transition-all ${expandedId === log.id ? 'bg-[#4A773C] text-white shadow-lg shadow-[#4A773C]/20' : 'text-gray-300'}`}
+                    className={`p-2 rounded-full transition-all ${expandedId === log.id ? 'bg-[#4A773C] text-white shadow-lg shadow-[#4A773C]/20' : 'text-gray-300 hover:bg-gray-50'}`}
                   >
-                    {expandedId === log.id ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                    <ChevronDown size={20} className={`transform transition-transform ${expandedId === log.id ? 'rotate-180' : ''}`} />
                   </button>
                 </div>
               </div>

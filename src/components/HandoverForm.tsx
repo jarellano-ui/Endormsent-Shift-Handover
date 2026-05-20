@@ -80,9 +80,9 @@ const MultiSelect = ({
                 exit={{ opacity: 0, y: 10 }}
                 className="absolute left-0 right-0 top-full mt-2 bg-white border border-gray-100 rounded-2xl shadow-2xl z-50 py-3 max-h-64 overflow-y-auto custom-scrollbar"
               >
-                {options.map((opt) => (
+                {options.map((opt, idx) => (
                   <button
-                    key={opt}
+                    key={`${opt}-${idx}`}
                     type="button"
                     onClick={() => toggleOption(opt)}
                     className="w-full px-6 py-3 flex items-center justify-between hover:bg-gray-50 transition-colors group"
@@ -137,7 +137,7 @@ export default function HandoverForm({ tasks, onComplete }: HandoverFormProps) {
       title: formData.title || 'Untitled Endorsement',
       description: formData.description || 'No description provided',
       urgency: formData.urgency,
-      status: 'pending'
+      status: 'on-going'
     };
 
     await storage.saveHandover(newHandover);
@@ -155,8 +155,8 @@ export default function HandoverForm({ tasks, onComplete }: HandoverFormProps) {
       {/* Progress Bar */}
       <div className="flex items-center justify-between mb-16 relative px-8">
         <div className="absolute left-16 right-16 top-1/2 -translate-y-1/2 h-px bg-gray-100 -z-0" />
-        {steps.map((s) => (
-          <div key={s.id} className="relative z-10 flex flex-col items-center gap-3">
+        {steps.map((s, idx) => (
+          <div key={`${s.id}-${idx}`} className="relative z-10 flex flex-col items-center gap-3">
             <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-500 shadow-sm ${
               step >= s.id 
                 ? 'bg-[#4A773C] text-white shadow-[#4A773C]/20' 
@@ -217,16 +217,17 @@ export default function HandoverForm({ tasks, onComplete }: HandoverFormProps) {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <MultiSelect 
-                    label="Endorsed By"
-                    options={IT_TEAM}
-                    selected={formData.endorsedBy}
-                    onChange={(val) => setFormData({...formData, endorsedBy: val})}
-                    icon={User}
-                  />
+                  <div className="space-y-3 relative opacity-60 cursor-not-allowed">
+                    <label className="text-[10px] font-black uppercase text-gray-400 tracking-[0.1em]">Endorsed By</label>
+                    <div className="w-full pl-14 pr-12 py-5 bg-gray-100 border border-gray-200 rounded-2xl font-bold text-gray-500 flex items-center gap-3">
+                      <User className="text-gray-400" size={24} />
+                      {currentUserName}
+                    </div>
+                    <p className="text-[8px] font-black uppercase text-[#4A773C] tracking-widest mt-2 px-1">Automatic Identifier Detected</p>
+                  </div>
                   <MultiSelect 
                     label="Endorse To"
-                    options={IT_TEAM}
+                    options={IT_TEAM.filter(name => name !== currentUserName)}
                     selected={formData.endorsedTo}
                     onChange={(val) => setFormData({...formData, endorsedTo: val})}
                     icon={Send}
@@ -249,9 +250,9 @@ export default function HandoverForm({ tasks, onComplete }: HandoverFormProps) {
                 </div>
 
                 <div className="grid grid-cols-3 gap-4">
-                  {(['low', 'medium', 'high'] as const).map((level) => (
+                  {(['low', 'medium', 'high'] as const).map((level, idx) => (
                     <button
-                      key={level}
+                      key={`${level}-${idx}`}
                       onClick={() => setFormData({ ...formData, urgency: level })}
                       className={`flex flex-col items-center gap-4 p-8 rounded-[2rem] border-2 transition-all group ${
                         formData.urgency === level 

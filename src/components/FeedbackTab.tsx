@@ -76,6 +76,13 @@ export function FeedbackTab({ currentUser }: FeedbackTabProps) {
     fetchFeedbacks();
   };
 
+  const deleteFeedback = async (id: string) => {
+    if (window.confirm('Are you sure you want to delete this feedback?')) {
+      await storage.deleteFeedback(id);
+      fetchFeedbacks();
+    }
+  };
+
   const getStatusIcon = (status: Feedback['status']) => {
     switch (status) {
       case 'resolved': return <CheckCircle2 className="text-green-500" size={18} />;
@@ -136,9 +143,9 @@ export function FeedbackTab({ currentUser }: FeedbackTabProps) {
                 <div>
                   <label className="block text-xs font-black uppercase tracking-widest text-gray-400 mb-2">Type</label>
                   <div className="flex gap-2">
-                    {(['bug', 'suggestion', 'issue'] as const).map((type) => (
+                    {(['bug', 'suggestion', 'issue'] as const).map((type, idx) => (
                       <button
-                        key={type}
+                        key={`${type}-${idx}`}
                         type="button"
                         onClick={() => setNewFeedback({ ...newFeedback, type })}
                         className={`flex-1 py-3 px-4 rounded-xl border-2 transition-all font-bold uppercase text-xs tracking-widest flex items-center justify-center gap-2 ${
@@ -195,10 +202,10 @@ export function FeedbackTab({ currentUser }: FeedbackTabProps) {
             <Loader2 className="animate-spin text-[#4A773C]" size={40} />
           </div>
         ) : feedbacks.length > 0 ? (
-          feedbacks.map((f) => (
+          feedbacks.map((f, idx) => (
             <motion.div
               layout
-              key={f.id}
+              key={`${f.id}-${idx}`}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               className="hc-card p-6 group"
@@ -243,6 +250,13 @@ export function FeedbackTab({ currentUser }: FeedbackTabProps) {
                       <option value="investigating">Investigating</option>
                       <option value="resolved">Resolved</option>
                     </select>
+                    <button
+                      onClick={() => deleteFeedback(f.id)}
+                      className="p-2 text-gray-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                      title="Delete Feedback"
+                    >
+                      <Trash2 size={18} />
+                    </button>
                   </div>
                 )}
               </div>

@@ -39,7 +39,7 @@ export default function UserManagement() {
   const fetchUsers = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/users');
+      const res = await fetch('/api/users', { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         setUsers(data);
@@ -61,7 +61,8 @@ export default function UserManagement() {
       const res = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newUser)
+        body: JSON.stringify(newUser),
+        credentials: 'include'
       });
       if (res.ok) {
         fetchUsers();
@@ -80,7 +81,8 @@ export default function UserManagement() {
       const res = await fetch(`/api/users/${editingUser.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editingUser)
+        body: JSON.stringify(editingUser),
+        credentials: 'include'
       });
       if (res.ok) {
         fetchUsers();
@@ -94,7 +96,10 @@ export default function UserManagement() {
 
   const handleDeleteUser = async (id: string) => {
     try {
-      const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/users/${id}`, { 
+        method: 'DELETE',
+        credentials: 'include'
+      });
       if (res.ok) {
         fetchUsers();
         setDeleteId(null);

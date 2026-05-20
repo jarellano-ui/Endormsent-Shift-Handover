@@ -35,6 +35,7 @@ import ITSchedule from './components/ITSchedule';
 import LoginPage from './components/LoginPage';
 import UserManagement from './components/UserManagement';
 import NotificationDropdown from './components/NotificationDropdown';
+import SearchResults from './components/SearchResults';
 import { FeedbackTab } from './components/FeedbackTab';
 
 import { auth as authService, UserProfile } from './services/auth';
@@ -49,8 +50,11 @@ export default function App() {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedResultId, setSelectedResultId] = useState<string | null>(null);
   const [editUser, setEditUser] = useState<UserProfile>({ name: '', role: '', email: '', position: '' });
   const notificationRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
 
   // Fallback profile from local storage if needed
   const [localStorageUser, setLocalStorageUser] = useState<UserProfile>(authService.getUser());
@@ -81,9 +85,12 @@ export default function App() {
       if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
         setIsNotificationsOpen(false);
       }
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setSearchQuery('');
+      }
     };
 
-    if (isNotificationsOpen) {
+    if (isNotificationsOpen || searchQuery) {
       document.addEventListener('mousedown', handleClickOutside);
     }
     return () => {
@@ -92,15 +99,17 @@ export default function App() {
   }, [isNotificationsOpen]);
 
   useEffect(() => {
-    refreshData();
-    
-    // Polling for notifications every 30 seconds
-    const interval = setInterval(() => {
-      fetchNotifications();
-    }, 30000);
+    if (sessionUser) {
+      refreshData();
+      
+      // Polling for notifications every 60 seconds
+      const interval = setInterval(() => {
+        fetchNotifications();
+      }, 60000);
 
-    return () => clearInterval(interval);
-  }, []);
+      return () => clearInterval(interval);
+    }
+  }, [sessionUser]);
 
   const fetchNotifications = async () => {
     const notifs = await storage.getNotifications();
@@ -143,7 +152,8 @@ export default function App() {
           email: editUser.email,
           position: editUser.position,
           password: editUser.password // Include password if set
-        })
+        }),
+        credentials: 'include'
       });
       
       if (res.ok) {
@@ -298,13 +308,39 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-6">
-            <div className="relative group hidden md:block">
+            <div className="relative group hidden md:block" ref={searchRef}>
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-[#4A773C] transition-colors" size={18} />
               <input 
                 type="text" 
-                placeholder="Search resources..." 
-                className="pl-12 pr-6 py-3 bg-gray-50 border border-gray-100 rounded-2xl text-sm text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#88C13E] outline-none w-72 transition-all shadow-inner"
+                placeholder="Search all tasks & history..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-12 pr-12 py-3 bg-gray-50 border border-gray-100 rounded-2xl text-sm text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#88C13E] outline-none w-80 transition-all shadow-inner"
               />
+              {searchQuery && (
+                <button 
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              )}
+
+              <AnimatePresence>
+                {searchQuery && (
+                  <SearchResults 
+                    query={searchQuery}
+                    tasks={tasks}
+                    handovers={handovers}
+                    onClose={() => setSearchQuery('')}
+                    onSelectItem={(view, id) => {
+                      setCurrentView(view);
+                      setSelectedResultId(id);
+                      setSearchQuery('');
+                    }}
+                  />
+                )}
+              </AnimatePresence>
             </div>
             
             <div className="relative" ref={notificationRef}>
@@ -372,7 +408,7 @@ export default function App() {
                 <Dashboard tasks={tasks} handovers={handovers} onNavigate={setCurrentView} onUpdate={refreshData} />
               )}
               {currentView === 'tasks' && (
-                <TaskBoard tasks={tasks} onUpdate={refreshData} />
+                <TaskBoard tasks={tasks} onUpdate={refreshData} initialSelectedId={selectedResultId} />
               )}
               {currentView === 'handover' && (
                 <EndorsementBoard 
@@ -385,7 +421,7 @@ export default function App() {
                 <ITSchedule />
               )}
               {currentView === 'logs' && (
-                <HandoverLogs handovers={handovers} tasks={tasks} onUpdate={refreshData} />
+                <HandoverLogs handovers={handovers} tasks={tasks} onUpdate={refreshData} initialSelectedId={selectedResultId} />
               )}
               {currentView === 'users' && sessionUser?.role === 'ADMIN' && (
                 <UserManagement />

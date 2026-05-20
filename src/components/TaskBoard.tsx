@@ -11,9 +11,11 @@ import {
   MoreVertical, 
   Trash2, 
   CheckCircle2, 
-  Circle,
   Clock,
-  AlertTriangle,
+  Pause,
+  Play,
+  XCircle,
+  RotateCcw,
   ChevronDown,
   ClipboardList,
   MessageSquare,
@@ -30,12 +32,34 @@ import CommentSection from './CommentSection';
 interface TaskBoardProps {
   tasks: Task[];
   onUpdate: () => void;
+  initialSelectedId?: string | null;
 }
 
-export default function TaskBoard({ tasks, onUpdate }: TaskBoardProps) {
+export default function TaskBoard({ tasks, onUpdate, initialSelectedId }: TaskBoardProps) {
   const [isAdding, setIsAdding] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'pending' | 'on-going' | 'completed'>('all');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'pending' | 'completed' | 'cancelled'>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (initialSelectedId) {
+      setExpandedId(initialSelectedId);
+      // If the task is completed, we might need to switch filter, 
+      // but SearchResults navigates to TaskBoard generally for active ones (though it shows all).
+      // If a task is completed, it's filtered out of 'all' by default in TaskBoard's logic.
+      const task = tasks.find(t => t.id === initialSelectedId);
+      if (task && task.status === 'completed') {
+        setFilter('completed');
+      }
+
+      setTimeout(() => {
+        const element = document.getElementById(initialSelectedId);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 100);
+    }
+  }, [initialSelectedId, tasks]);
   const [newTask, setNewTask] = useState({ 
     title: '', 
     description: '', 
@@ -45,6 +69,16 @@ export default function TaskBoard({ tasks, onUpdate }: TaskBoardProps) {
   
   const { user: sessionUser } = useAuth();
   const localUser = authService.getUser();
+  const formatDuration = (ms: number) => {
+    const mins = Math.floor(ms / (1000 * 60));
+    const hours = Math.floor(mins / 60);
+    const days = Math.floor(hours / 24);
+    
+    if (days > 0) return `${days}d ${hours % 24}h`;
+    if (hours > 0) return `${hours}h ${mins % 60}m`;
+    return `${mins}m`;
+  };
+
   const currentUserName = sessionUser?.name || localUser.name;
 
   const handleAddComment = async (taskId: string, text: string) => {
@@ -83,24 +117,34 @@ export default function TaskBoard({ tasks, onUpdate }: TaskBoardProps) {
 
   const handleAddTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTask.title) return;
+    if (!newTask.title.trim() || isSubmitting) return;
 
+    if (!newTask.assignedTo || newTask.assignedTo.length === 0) {
+      alert("Please assign at least one person to this task before creating it.");
+      return;
+    }
+
+    setIsSubmitting(true);
     const task: Task = {
       id: Math.random().toString(36).substr(2, 9) + Date.now().toString(36),
       title: newTask.title,
       description: newTask.description,
       priority: newTask.priority,
-      assignedTo: newTask.assignedTo.length > 0 ? newTask.assignedTo : undefined,
-      status: 'pending',
+      assignedTo: newTask.assignedTo,
+      status: 'on-going',
       createdBy: currentUserName,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
 
-    await storage.saveTasks([task, ...tasks]);
-    setNewTask({ title: '', description: '', priority: 'medium', assignedTo: [] });
-    setIsAdding(false);
-    onUpdate();
+    try {
+      await storage.saveTasks([task, ...tasks]);
+      setNewTask({ title: '', description: '', priority: 'medium', assignedTo: [] });
+      setIsAdding(false);
+      onUpdate();
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const toggleTaskStatus = async (id: string, targetStatus?: Task['status']) => {
@@ -108,7 +152,12 @@ export default function TaskBoard({ tasks, onUpdate }: TaskBoardProps) {
       if (t.id === id) {
         if (t.status === 'completed') return t; // Locked
 
-        let nextStatus: Task['status'] = t.status === 'pending' ? 'on-going' : 'completed';
+        // Check ownership for cancellation
+        if (targetStatus === 'cancelled' && t.createdBy !== currentUserName) {
+          return t;
+        }
+
+        let nextStatus: Task['status'] = 'completed';
         if (targetStatus) nextStatus = targetStatus;
         
         const now = Date.now();
@@ -116,10 +165,6 @@ export default function TaskBoard({ tasks, onUpdate }: TaskBoardProps) {
           status: nextStatus,
           updatedAt: now
         };
-
-        if (nextStatus === 'on-going' && !t.startedAt) {
-          updates.startedAt = now;
-        }
 
         if (nextStatus === 'completed' && !t.completedAt) {
           updates.completedAt = now;
@@ -140,13 +185,6 @@ export default function TaskBoard({ tasks, onUpdate }: TaskBoardProps) {
     onUpdate();
   };
 
-  const formatDuration = (ms: number) => {
-    const mins = Math.floor(ms / 60000);
-    const hrs = Math.floor(mins / 60);
-    if (hrs > 0) return `${hrs}h ${mins % 60}m`;
-    return `${mins}m`;
-  };
-
   const formatTime = (ts: number) => {
     return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
@@ -158,33 +196,34 @@ export default function TaskBoard({ tasks, onUpdate }: TaskBoardProps) {
   };
 
   const filteredTasks = tasks.filter(t => {
-    if (filter === 'all') return t.status !== 'completed';
+    if (filter === 'all') return t.status !== 'completed' && t.status !== 'cancelled';
+    if (filter === 'pending') return t.status === 'pending' || t.status === 'on-going';
     return t.status === filter;
   });
 
   return (
     <div className="space-y-6 pb-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-2 bg-gray-100 p-1.5 rounded-2xl self-start">
-          {(['all', 'pending', 'on-going', 'completed'] as const).map((f) => (
+        <div className="flex items-center gap-2 bg-gray-100 p-1.5 rounded-2xl self-start overflow-x-auto">
+          {(['all', 'pending', 'completed', 'cancelled'] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+              className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
                 filter === f ? 'bg-white text-[#4A773C] shadow-sm' : 'hover:bg-gray-200 text-gray-500'
               }`}
             >
-              {f === 'on-going' ? 'Ongoing' : f}
+              {f}
             </button>
           ))}
         </div>
 
         <button 
           onClick={() => setIsAdding(true)}
-          className="flex items-center gap-3 bg-[#4A773C] text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-[#88C13E] transition-all shadow-xl shadow-[#4A773C]/20"
+          className="bg-[#4A773C] text-white p-4 rounded-xl hover:bg-[#88C13E] transition-all shadow-lg shadow-[#4A773C]/20 flex items-center justify-center shrink-0"
+          title="Add Task"
         >
-          <Plus size={20} />
-          Add Task
+          <Plus size={24} strokeWidth={3} />
         </button>
       </div>
 
@@ -272,9 +311,11 @@ export default function TaskBoard({ tasks, onUpdate }: TaskBoardProps) {
                     </button>
                     <button 
                       type="submit"
-                      className="bg-[#4A773C] text-white px-8 py-3 rounded-xl font-black uppercase tracking-widest shadow-lg shadow-[#4A773C]/20 active:scale-95 transition-all"
+                      disabled={isSubmitting || newTask.assignedTo.length === 0}
+                      className="bg-[#4A773C] text-white px-8 py-3 rounded-xl font-black uppercase tracking-widest shadow-lg shadow-[#4A773C]/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
-                      Submit
+                      {isSubmitting && <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}><Clock size={16}/></motion.div>}
+                      {isSubmitting ? 'Submitting...' : 'Submit'}
                     </button>
                   </div>
                 </div>
@@ -283,7 +324,7 @@ export default function TaskBoard({ tasks, onUpdate }: TaskBoardProps) {
           )}
 
             {filteredTasks.length > 0 ? (
-            filteredTasks.map((task) => {
+            filteredTasks.map((task, idx) => {
               const isAssignedToMe = task.assignedTo && (
                 Array.isArray(task.assignedTo) 
                   ? task.assignedTo.includes(currentUserName) 
@@ -293,7 +334,8 @@ export default function TaskBoard({ tasks, onUpdate }: TaskBoardProps) {
               return (
                 <motion.div
                   layout
-                  key={task.id}
+                  key={`${task.id}-${idx}`}
+                  id={task.id}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.95 }}
@@ -305,32 +347,6 @@ export default function TaskBoard({ tasks, onUpdate }: TaskBoardProps) {
                     task.status === 'completed' ? 'opacity-50' : ''
                   }`}
                 >
-                <div className="flex flex-col gap-1 items-center">
-                  <button 
-                    onClick={() => toggleTaskStatus(task.id)}
-                    disabled={task.status === 'completed'}
-                    className={`mt-1 transition-all transform active:scale-90 ${
-                      task.status === 'completed' ? 'text-[#88C13E] cursor-not-allowed' : 
-                      task.status === 'on-going' ? 'text-blue-500 hover:text-blue-600' :
-                      'text-orange-500 hover:text-orange-600'
-                    }`}
-                    title={task.status === 'completed' ? 'Task Completed' : task.status === 'on-going' ? 'Mark as Completed' : 'Start Task'}
-                  >
-                    {task.status === 'completed' ? <CheckCircle2 size={28} /> : 
-                     task.status === 'on-going' ? <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 4, ease: "linear" }}><Clock size={28} /></motion.div> : 
-                     <Circle size={28} />}
-                  </button>
-                  
-                  {task.status === 'on-going' && (
-                    <button
-                      onClick={() => toggleTaskStatus(task.id, 'pending')}
-                      className="text-[9px] font-black uppercase text-gray-400 hover:text-rose-500 transition-colors"
-                      title="Move back to Pending"
-                    >
-                      Pause
-                    </button>
-                  )}
-                </div>
                 
                 <div className="flex-1 min-w-0">
                   <div 
@@ -344,9 +360,10 @@ export default function TaskBoard({ tasks, onUpdate }: TaskBoardProps) {
                     </h4>
                     <div className="flex items-center gap-2">
                       <span className={`px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest border ${
-                        task.status === 'completed' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
-                        task.status === 'on-going' ? 'bg-blue-50 text-blue-600 border-blue-100' :
-                        'bg-orange-50 text-orange-600 border-orange-100'
+                        task.status === 'completed' ? 'bg-[#D1FAE5] text-[#065F46] border-[#A7F3D0]' :
+                        task.status === 'on-going' ? 'bg-[#F2F7FF] text-[#4A773C] border-[#DCE8F9]' :
+                        task.status === 'cancelled' ? 'bg-rose-50 text-rose-600 border-rose-100' :
+                        'bg-amber-50 text-amber-600 border-amber-100'
                       }`}>
                         {task.status === 'on-going' ? 'Ongoing' : task.status}
                       </span>
@@ -406,14 +423,71 @@ export default function TaskBoard({ tasks, onUpdate }: TaskBoardProps) {
                        </span>
                     </div>
 
-                    <div className="flex items-center gap-2 ml-auto">
-                      <div className="flex items-center gap-1.5 text-gray-400 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
+                    <div className="flex flex-col gap-1">
+                       <p className="text-[8px] font-black uppercase text-blue-600 tracking-widest leading-none mb-1">SLA</p>
+                       <span className="text-[10px] text-blue-700 font-black uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                         {formatDuration((task.completedAt || Date.now()) - task.createdAt)}
+                       </span>
+                    </div>
+
+                    {task.status === 'completed' && task.completedAt && (
+                      <div className="flex flex-col gap-1">
+                        <p className="text-[8px] font-black uppercase text-emerald-600 tracking-widest leading-none mb-1">Resolution Time</p>
+                        <span className="text-[10px] text-emerald-700 font-black uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
+                          {new Date(task.completedAt).toLocaleDateString()} {formatTime(task.completedAt)}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-4 ml-auto">
+                      <div className="flex items-center gap-3">
+                        {(!task.status || task.status !== 'completed') && (
+                          <button 
+                            onClick={() => {
+                              if (task.createdBy === currentUserName) {
+                                toggleTaskStatus(task.id, task.status === 'cancelled' ? 'pending' : 'cancelled');
+                              }
+                            }}
+                            disabled={task.createdBy !== currentUserName}
+                            className={`w-11 h-11 flex items-center justify-center rounded-xl transition-all border ${
+                              task.status === 'cancelled'
+                                ? 'bg-rose-600 text-white border-rose-700 shadow-md shadow-rose-500/30'
+                                : task.createdBy === currentUserName
+                                ? 'text-gray-300 hover:text-rose-500 border-gray-100 hover:bg-rose-50'
+                                : 'text-gray-200 border-gray-50 cursor-not-allowed opacity-50'
+                            }`}
+                            title={
+                              task.createdBy !== currentUserName 
+                                ? "Only the task owner can cancel this task" 
+                                : task.status === 'cancelled' ? "Revert Cancellation" : "Cancel Task"
+                            }
+                          >
+                            <XCircle size={20} strokeWidth={3} />
+                          </button>
+                        )}
+
+                        <button 
+                          onClick={() => toggleTaskStatus(task.id, 'completed')}
+                          className={`w-11 h-11 flex items-center justify-center rounded-2xl transition-all border ${
+                            task.status === 'completed' 
+                              ? 'bg-emerald-600 text-white border-emerald-700 shadow-md shadow-emerald-500/30' 
+                              : 'text-gray-300 hover:text-emerald-500 border-gray-100 hover:bg-emerald-50'
+                          }`}
+                          title="Set as Complete"
+                        >
+                          <CheckCircle2 size={20} strokeWidth={3} />
+                        </button>
+                      </div>
+
+                      <div className="w-px h-8 bg-gray-100" />
+
+                      <div className="flex items-center gap-1.5 text-gray-400 px-1">
                         <MessageSquare size={12} />
                         <span className="text-[10px] font-bold">{task.comments?.length || 0}</span>
                       </div>
                       <button 
                         onClick={() => setExpandedId(expandedId === task.id ? null : task.id)}
-                        className={`p-2 rounded-full transition-all ${expandedId === task.id ? 'bg-[#4A773C] text-white shadow-lg shadow-[#4A773C]/20' : 'text-gray-300'}`}
+                        className={`p-2 rounded-full transition-all ${expandedId === task.id ? 'bg-[#4A773C] text-white shadow-lg shadow-[#4A773C]/20' : 'text-gray-300 hover:bg-gray-50'}`}
                       >
                         <ChevronDown size={20} className={`transform transition-transform ${expandedId === task.id ? 'rotate-180' : ''}`} />
                       </button>
@@ -448,14 +522,16 @@ export default function TaskBoard({ tasks, onUpdate }: TaskBoardProps) {
                   </AnimatePresence>
                 </div>
 
-                <div className="flex flex-col gap-2">
-                  <button 
-                    onClick={() => deleteTask(task.id)}
-                    className="p-2 text-gray-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                  >
-                    <Trash2 size={20} />
-                  </button>
-                </div>
+                {sessionUser?.role === 'ADMIN' && (
+                  <div className="flex flex-col gap-2">
+                    <button 
+                      onClick={() => deleteTask(task.id)}
+                      className="p-2 text-gray-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                    >
+                      <Trash2 size={20} />
+                    </button>
+                  </div>
+                )}
               </motion.div>
             );
           })
